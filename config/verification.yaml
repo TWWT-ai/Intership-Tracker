@@ -1,0 +1,88 @@
+# Deadline and open/closed verification.
+#
+# Aggregators routinely leave a role listed after the employer has closed it,
+# and often show no deadline at all. So after deduplication (one visit per real
+# job, not one per platform) the verifier opens the actual job page and, when
+# that is still unclear, follows through to the employer's own application page.
+#
+# The verifier never guesses. If it cannot establish the state it records
+# UNKNOWN, which the workbook displays plainly.
+
+enabled: true
+
+budget:
+  # Hard ceiling on pages fetched per run, spent highest-priority first.
+  max_verifications: 120
+  # Do not re-check a job that was checked within this many days...
+  revalidate_after_days: 3
+  # ...except for these, which are always re-checked.
+  always_verify:
+    new_jobs: true
+    priority: ["HIGH"]
+    open_status: ["UNKNOWN"]
+    deadline_within_days: 14
+
+# Follow application_url to the employer's own ATS when the source page did not
+# settle the question. This is where the truth usually lives, especially for
+# Trackr rows whose url field points straight at Greenhouse/Workday/etc.
+follow_application_url: true
+
+# An HTTP 404 or 410 on the application URL is treated as strong evidence the
+# role has closed. Other error codes are inconclusive and yield UNKNOWN.
+treat_404_as_closed: true
+
+# Case-insensitive substrings. Matching any of these marks the job CLOSED.
+closed_markers:
+  - "applications are closed"
+  - "applications closed"
+  - "application deadline has passed"
+  - "no longer accepting applications"
+  - "no longer accepting"
+  - "this vacancy has expired"
+  - "this job has expired"
+  - "vacancy is now closed"
+  - "position has been filled"
+  - "role has been filled"
+  - "closed for applications"
+  - "we are no longer taking applications"
+  - "job not found"
+  - "this opportunity is no longer available"
+  - "posting is no longer active"
+
+# Matching any of these marks the job OPEN, and outranks a closed marker only
+# when it appears in the page's main content rather than boilerplate.
+open_markers:
+  - "apply now"
+  - "submit your application"
+  - "start your application"
+  - "applications close"
+  - "accepting applications"
+  - "apply for this role"
+  - "apply for this job"
+
+# Labels that introduce a deadline date on a job page. The parser looks for a
+# date within the following 80 characters.
+deadline_labels:
+  - "application deadline"
+  - "applications close"
+  - "closing date"
+  - "deadline"
+  - "apply by"
+  - "close date"
+  - "applications must be received by"
+
+# UK sites: 03/04/2027 means 3 April, not 4 March. Never change this without
+# also changing the normalizer.
+dayfirst: true
+
+# When the verified deadline and the platform's listed deadline disagree by
+# more than this many days, the row is flagged for review. Both dates are kept.
+deadline_disagreement_flag_days: 2
+
+# `main.py eligibility`: at most this many employer postings are read per run for
+# who may apply. Rows a careers feed already described are not read again.
+eligibility_max_pages: 600
+# Never read for eligibility: aggregators and job sites whose pages list many
+# programmes, or which a row with no employer link points at instead.
+eligibility_skip_hosts: [the-trackr.com, gradcracker.com, brightnetwork.co.uk, linkedin.com, higherin.com,
+                         targetjobs.co.uk]

@@ -1,0 +1,115 @@
+# Which student programme a posting is: Spring Week, Summer Internship or
+# Industrial Placement.
+#
+# Employers name one programme many ways ("Spring Week", "Spring Insight",
+# "Discovery Programme", "Technology Development Programme"). Who may apply does
+# not vary: spring weeks take first-years, summer internships take
+# penultimate-years, industrial placements take students doing a placement year.
+#
+# How tracker/programme.py decides:
+#   1. The requirements name exactly one eligible year -> that type, whatever
+#      the title says, and the sentence is kept as evidence in Year of Study.
+#      A "Summer Internship" open to first-year students is a Spring Week.
+#      Wording that fits the title's own type too never overrides it (see
+#      `compatible`).
+#   2. Otherwise the title names one type outright -> that type.
+#   3. Otherwise nothing is guessed: the platform's type stands, or stays blank.
+#
+# Phrases are case-insensitive whole words; a space also matches a hyphen, so
+# "first year" matches "first-year".
+
+# Checked in this order, so "Summer Placement" is a summer internship.
+title_types:
+  Spring Week: [spring, insight, discovery week, first year programme, student insight, undergraduate insight]
+  Summer Internship: [summer, undergraduate internship]
+  Industrial Placement: [placement, placements, industrial, year in industry, sandwich,
+                         12 month, 12 months, 13 month, 13 months]
+
+eligibility:
+  Spring Week: [first year, 1st year, year one, fresher, freshers, freshman]
+  Summer Internship: [penultimate, pre final year, second year of a three year,
+                      2nd year of a 3 year]
+  Industrial Placement: [placement year, year in industry, year out in industry,
+                         sandwich degree, sandwich course, sandwich year,
+                         industrial placement year, degree with a placement,
+                         degree with placement, 12 month placement, 13 month placement]
+
+# Eligibility that also describes another type. UK firms ask placement
+# applicants to "be in your penultimate year at university" just as they ask
+# summer interns, so penultimate wording keeps a title that says placement.
+compatible:
+  Summer Internship: [Industrial Placement]
+
+# An eligibility phrase only counts in a sentence about studying, so "your first
+# year on the team" is not read as "first-year students".
+student_context: [student, students, university, universities, undergraduate, undergraduates,
+                  degree, degrees, studying, study, course, uni, penultimate, academic year]
+
+# A sentence containing any of these (plain substrings) says who can NOT apply,
+# or sends some students to a different programme, and is ignored rather than
+# read as describing this posting.
+negations: ["not ", "n't ", "unfortunately", "ineligible", "no longer",
+            "instead", "see our", "apply to our", "apply for our", "look out for our"]
+
+# Titles that name a student programme without saying which. They are worth
+# opening on search-only platforms, and count as a student role only when the
+# requirements then settle the type.
+programme_titles: [programme, program, insight, discovery, academy, taster, development, developing,
+                   early careers, emerging talent, open day, open week, first year, spring internship]
+
+# Graduation years (tracker/graduation.py). A year shortly after one of these,
+# in a sentence with no negation, is a year the posting admits.
+graduation_words: [graduate, graduates, graduating, graduation, class of, finish, finishing,
+                   complete your degree, completing your degree, expected to complete]
+
+# When no year is stated: years from the programme's own year to graduation, by
+# the year of study its requirements name. First-years on a 2027 spring week
+# graduate in 2029 (three-year degree) or 2030 (four-year); penultimate-years on
+# a 2027 summer internship in 2028; students on a 2027/28 placement year in 2029.
+derived_graduation:
+  Spring Week: [2, 3]
+  Summer Internship: [1]
+  Industrial Placement: [2]
+
+# What a posting says about itself (tracker/eligibility.py). Classification uses,
+# in order: duration, placement-year wording, the span of its dates, whether it
+# leads to a later internship, who may apply, and only then the title.
+facts:
+  thresholds: {spring_max_weeks: 4, summer_min_weeks: 5, summer_max_weeks: 16, placement_min_months: 9}
+  # A length only counts near one of these and never near an ignore word, so
+  # "6 weeks of paid vacation" or "three days in-office" is not a duration.
+  duration_context: [programme, program, internship, placement, insight, event, scheme, role, opportunity,
+                     opportunities, experience, course, rotation, industry, analyst, intern, summer, contract]
+  duration_ignore: [vacation, holiday, holidays, leave, pto, time off, in office, in the office, per week,
+                    each week, per month, submit, notice, hours, within, days a week, working days, salary, bonus,
+                    onboarding, training, fundamentals, response, assessment]
+  placement_year: [year in industry, placement year, industrial placement year, sandwich, required by their degree,
+                   required by your degree, part of your degree, part of their degree, structured course,
+                   long term internship, year long placement, year out, 12 month placement]
+  leads_to_internship: [fast track, fast tracked, fast tracking, direct entry, progress to our summer,
+                        offer for our summer internship, interview for our summer internship]
+  second_of_four: [second year of a four year, second year of a 4 year, 2nd year of a four year,
+                   2nd year of a 4 year, second year on a four year, second years on a four year]
+  first_year: [first year, 1st year, fresher, freshers, freshman, year one]
+  penultimate: [penultimate]
+  final_year: [final year]
+  completed_first_year: [completed your first year, completed their first year, completed at least one year,
+                         finished your first year, completed the first year]
+  subject_lead: [degree in, studying, pursuing, major in, majoring in, course in, background in]
+  any_subject: [any degree, any discipline, all degree, all degrees, all academic backgrounds, all disciplines,
+                any subject, all backgrounds]
+  cs_subject: [computer science, computing, software, stem, engineering, mathematics, maths, data, technology,
+               technical, related field, related subject, informatics, physics, quantitative,
+               information technology, machine learning, cyber, artificial intelligence]
+  # A Yes is only questioned on subject when the posting names one of these and
+  # nothing compatible with Computer Science.
+  non_cs_subject: [law, legal, accounting, accountancy, medicine, medical, nursing, pharmacy, chemistry,
+                   biology, biochemistry, biosciences, geography, history, languages, marketing, psychology,
+                   architecture, dentistry, veterinary, music, drama, fine art]
+  right_to_work: [right to work]
+  visa_no: [no visa sponsorship, not able to sponsor, unable to sponsor, cannot sponsor, can't sponsor,
+            do not sponsor, don't sponsor, will not sponsor, won't sponsor, cannot provide sponsorship,
+            not provide sponsorship, without sponsorship, sponsorship is not available, not offer sponsorship,
+            no sponsorship, not eligible for sponsorship]
+  visa_yes: [sponsors visa, visa sponsorship is available, visa sponsorship available, able to sponsor,
+             we can sponsor, will sponsor, sponsorship is available, sponsorship available, offer visa sponsorship]

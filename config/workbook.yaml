@@ -1,0 +1,48 @@
+# Layout of the Internships sheet.
+#
+# `columns` is the visible column list, in order. Delete a line to drop that
+# column, add one back (any label from tracker/excel.py COLUMNS) to restore it.
+# Deleting a column in Excel alone does NOT stick: every run rebuilds the sheet
+# from this list.
+#
+# ID and Application Status are always written even if removed here, because
+# your statuses are matched back to rows by ID.
+
+columns:
+  - ID
+  - Priority
+  - Match Score
+  - Company
+  - Job Title
+  - Date Posted
+  - Deadline
+  - Open Status
+  - Primary Source
+  - Sources
+  - Application URL
+  - Location
+  - Summer Internship
+  - Industrial Placement
+  - Spring Week
+  - Expected Graduation
+  - Eligible for You
+  - Duration
+  - Visa Sponsorship
+  - Skills
+  - CV
+  - WA
+  - CL
+  - Application Status
+  - Status Evidence
+  - Notes
+
+# Colour-coded flag columns. `header` fills the column heading (white text);
+# `fill` tints a cell that has a value and `colour` is its text colour.
+# "Optional" cells get the tint with plain text so "Yes" stands out.
+flag_columns:
+  Summer Internship: {header: "C65911", fill: "FCE4D6", colour: "C65911"}
+  Industrial Placement: {header: "7030A0", fill: "E4DFEC", colour: "7030A0"}
+  Spring Week: {header: "31859C", fill: "DAEEF3", colour: "31859C"}
+  CV: {header: "2F5597", fill: "DDEBF7", colour: "2F5597"}
+  WA: {header: "BF8F00", fill: "FFF2CC", colour: "7F6000"}
+  CL: {header: "548235", fill: "E2EFDA", colour: "375623"}

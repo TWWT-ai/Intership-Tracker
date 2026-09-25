@@ -1,0 +1,39 @@
+# Secrets — never commit
+.env
+*.secret
+credentials/
+sessions/
+
+# Environment
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Personal data - never commit. data/profile.example.json is the blank template.
+data/profile.json
+data/profile.draft.json
+data/applications/
+data/internships.xlsx
+data/internships.*.xlsx
+data/backups/
+data/state/
+# Research and repair artefacts: workbook and run backups (your statuses and
+# Notes), drafts, dumps. The scripts beside them - the layout pass among them -
+# stay tracked.
+data/checkpoint/*
+!data/checkpoint/*.py
+# Pages saved from your browser for `ingest`: they can carry logged-in page chrome.
+data/manual/
+
+# Runtime state and outputs
+data/logs/
+~$*.xlsx
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

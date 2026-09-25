@@ -1,0 +1,67 @@
+{
+  "programmes": [
+    {
+      "id": "31xge3v4v7",
+      "groupId": "h1awjncptu",
+      "name": "2027 Software Engineer Program - Summer Internship",
+      "companyId": "j-p-morgan",
+      "url": "https://jpmc.fa.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/jobs?keyword=summer&utm_source=Trackr",
+      "region": "UK",
+      "industry": "Tech",
+      "season": "2027",
+      "type": "summer-internships",
+      "divisions": ["Tech|Software Engineering"],
+      "disciplines": [],
+      "categories": ["Software Engineering"],
+      "locations": [],
+      "eligibility": null,
+      "process": null,
+      "openingDate": "2026-08-31T00:00:00.000Z",
+      "closingDate": "2026-11-01T00:00:00.000Z",
+      "rolling": null,
+      "cv": true,
+      "writtenAnswers": "No",
+      "coverLetter": "Optional",
+      "notes": null,
+      "company": {
+        "id": "j-p-morgan",
+        "name": "J.P. Morgan",
+        "sponsorsVisa": true,
+        "description": "J.P. Morgan is the investment banking arm of JPMorgan Chase & Co."
+      }
+    },
+    {
+      "id": "aa11bb22cc",
+      "name": "Data Science Machine Learning Internship (Summer 2027)",
+      "companyId": "castleton-commodities-international",
+      "url": "https://osv-cci.wd1.myworkdayjobs.com/en-US/CCICareers/job/Data-Science-ML-Intern",
+      "region": "UK",
+      "industry": "Tech",
+      "season": "2027",
+      "type": "summer-internships",
+      "divisions": ["Tech|Data Science"],
+      "categories": ["Data Science", "Machine Learning"],
+      "locations": ["London"],
+      "openingDate": null,
+      "closingDate": null,
+      "rolling": true,
+      "cv": true,
+      "coverLetter": "No",
+      "company": {
+        "id": "castleton-commodities-international",
+        "name": "Castleton Commodities International",
+        "sponsorsVisa": false
+      }
+    },
+    {
+      "id": "no-company-record",
+      "name": "Broken Record With No Company",
+      "url": "",
+      "region": "UK",
+      "season": "2027",
+      "type": "summer-internships",
+      "company": {}
+    }
+  ],
+  "groups": []
+}

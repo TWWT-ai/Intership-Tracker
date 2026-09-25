@@ -1,0 +1,312 @@
+# Per-platform adapter settings.
+#
+# COMPLIANCE NOTE (read before changing anything here):
+#   * Every outbound URL is checked against the site's robots.txt before it is
+#     requested. That guard is in code (tracker/robots.py) and is not
+#     configurable from this file.
+#   * Rate limits below are deliberately conservative. Lowering them increases
+#     load on sites that are providing this data for free.
+#   * Nothing in this project bypasses CAPTCHAs, anti-bot challenges, logins or
+#     access controls. If a challenge is detected the source is skipped and the
+#     run continues with the last known-good data.
+#   * See README.md "Scraping limitations" for each platform's stated terms.
+
+defaults:
+  # Seconds between requests to the same host.
+  rate_limit_seconds: 3.0
+  # Give up on a single request after this long.
+  timeout_seconds: 30
+  # Retry transient failures (timeouts, 5xx) this many times, with backoff.
+  max_retries: 2
+  retry_backoff_seconds: 5
+
+# When one job is found on several platforms it becomes ONE row. This order
+# breaks ties for which platform is recorded as the Primary Source. A source
+# that supplies both a real deadline and a working application URL always beats
+# one that does not, regardless of this order.
+primary_source_preference:
+  - trackr
+  - careers
+  - brightnetwork
+  - gradcracker
+  - higherin
+  - targetjobs
+
+sources:
+  trackr:
+    enabled: true
+    display_name: "Trackr"
+    # Excel fill for the Primary Source cell, and the text run colour used in
+    # the Sources cell when a job was found on more than one platform.
+    colour: "2F6FBF"        # blue
+    fill: "DCE9F8"          # light blue tint
+    api_base: "https://api.the-trackr.com"
+    board_base: "https://app.the-trackr.com"
+    # The season x type matrix to sweep. Each combination is one API call.
+    regions: ["UK"]
+    industries: ["Tech"]
+    seasons: ["2026", "2027"]
+    types: ["summer-internships", "industrial-placements", "spring-weeks"]
+    # Trackr is a JSON API, so it needs no browser and can be polled faster.
+    rate_limit_seconds: 1.5
+
+  gradcracker:
+    enabled: true
+    display_name: "Gradcracker"
+    colour: "C05621"        # orange
+    fill: "FCE6D5"          # light orange tint
+    base_url: "https://www.gradcracker.com"
+    # Path form is /search/<discipline>/<job-type>.
+    # NOTE: the slug order is "work-placements-internships". The reverse
+    # ("internships-work-placements") silently redirects to the homepage.
+    disciplines: ["computing-technology"]
+    job_types: ["work-placements-internships"]
+    max_pages: 10
+    # Cloudflare rejects non-browser clients, so this source needs Playwright.
+    requires_browser: true
+
+  brightnetwork:
+    enabled: true
+    display_name: "Bright Network"
+    colour: "2F7A4B"        # green
+    fill: "DCEFE2"          # light green tint
+    base_url: "https://www.brightnetwork.co.uk"
+    # /search/ and /api/ are Disallowed in robots.txt. The sitemap is the
+    # publisher's own advertised enumeration route and is explicitly allowed.
+    # tracker/robots.py enforces this independently; do not add /search/ here.
+    sitemap_url: "https://www.brightnetwork.co.uk/sitemap-main_jobs.xml"
+    # Only fetch job pages whose sitemap <lastmod> is newer than this many days.
+    # Bright Network refreshes the sitemap daily, which makes incremental sync free.
+    lastmod_window_days: 14
+    max_job_pages: 200
+    requires_browser: true
+
+  # Student job boards whose postings are listed in a sitemap (sources/jobboards.py).
+  # Only recent postings whose address names a student programme are opened.
+  # A board copy is a lead: the employer's own link is kept when the same
+  # programme is found elsewhere.
+  higherin:
+    enabled: true
+    display_name: "Higherin"
+    colour: "6B3FA0"
+    fill: "EAE2F4"
+    sitemap: "https://higherin.com/sitemaps/sitemap-index.xml"
+    rate_limit_seconds: 3
+    lastmod_window_days: 60
+    max_job_pages: 700
+    slug_terms: [intern, internship, internships, placement, placements, industrial, insight, spring, summer,
+                 discovery, year in industry, sandwich, undergraduate, work experience, first year]
+
+  targetjobs:
+    enabled: true
+    display_name: "TargetJobs"
+    colour: "B7472A"
+    fill: "F8E0D8"
+    sitemap: "https://targetjobs.co.uk/sitemap-0.xml"
+    rate_limit_seconds: 3
+    lastmod_window_days: 60
+    max_job_pages: 900
+    slug_terms: [intern, internship, internships, placement, placements, industrial, insight, spring, summer,
+                 discovery, year in industry, sandwich, undergraduate, work experience, first year]
+
+  # Employers' own careers boards, read from the platforms' public feeds
+  # (sources/careers.py). Must stay LAST: it finds boards in the application
+  # links the sources above just collected.
+  careers:
+    enabled: true
+    display_name: "Company site"
+    colour: "A5226E"        # magenta
+    fill: "F6E1EE"          # light magenta tint
+    # Search every company whose application links point at a supported board.
+    discover_from_sources: true
+    # SmartRecruiters is absent on purpose: its robots.txt disallows its API.
+    # Google Careers likewise disallows its job results. Oleeo (*.tal.net)
+    # boards are plain HTML; their robots.txt allows ordinary agents (it bars
+    # ClaudeBot and AI training) and asks for a 10-second crawl delay.
+    # Eightfold (Microsoft, AstraZeneca, PayPal) is supported in code but off:
+    # its robots.txt is "Disallow: /" then "Allow: /api/pcsx", and the guard's
+    # parser applies the first matching rule, so the API reads as disallowed.
+    platforms: [greenhouse, lever, ashby, workable, workday, oracle, amazon, oleeo]
+    # Public APIs built for this; still spaced per host.
+    rate_limit_seconds: 1.0
+    # Workday offers search only. Each query is paged, 20 postings a page.
+    workday_queries: ["intern", "internship", "placement", "spring week", "insight", "discovery",
+                      "summer analyst", "undergraduate", "year in industry", "early careers"]
+    workday_max_pages: 5
+    # Oracle Recruiting Cloud, Eightfold and Amazon search rather than list.
+    # Each query is paged. Oracle and Eightfold results are screened on title
+    # (student or programme name, plus tech or a firm-wide programme) before a
+    # posting is opened. "spring" and "insight" find the first-year intake
+    # that aggregators often leave out.
+    search_queries: ["intern", "internship", "placement", "spring", "insight", "summer analyst", "discovery",
+                     "undergraduate", "early careers"]
+    search_max_pages: 4
+    # Oleeo boards (BlackRock, Morgan Stanley, Nomura, Jefferies...). Every
+    # posting is opened at the crawl delay their robots.txt asks for, except
+    # rows whose listing names a place outside the UK.
+    oleeo_rate_limit_seconds: 10
+    oleeo_max_pages: 10
+    oleeo_foreign_places: [americas, amrs, amers, apac, asia, "asia pacific", "north america",
+                           "latin america", "new york", "mexico city", "sao paulo", "hong kong",
+                           singapore, tokyo, mumbai, bangalore, bengaluru, sydney, shanghai, beijing,
+                           india, japan, china, australia, canada, toronto, "san francisco", chicago,
+                           "salt lake city", baltimore, dubai, riyadh, paris, frankfurt, madrid, milan,
+                           zurich, geneva, budapest, warsaw, amsterdam, dublin, luxembourg,
+                           "united states", usa]
+
+    # Extra boards, e.g. found by web search. Give the company and any URL on
+    # its board (a posting or the board's front page):
+    #   - {company: "Example Ltd", url: "https://boards.greenhouse.io/example"}
+    # Boards of companies already in the sheet are found automatically and do
+    # not need listing here.
+    boards:
+      # Found by web search on 2026-09-11 (UK student tech roles seen on them).
+      - {company: "Capstone Investment Advisors", url: "https://boards.greenhouse.io/capstoneinvestmentadvisors"}
+      - {company: "Five Rings", url: "https://job-boards.greenhouse.io/fiveringsllc"}
+      - {company: "Capital on Tap", url: "https://job-boards.greenhouse.io/capitalontap"}
+      - {company: "Twilio", url: "https://boards.greenhouse.io/twilio"}
+      - {company: "GSR", url: "https://job-boards.eu.greenhouse.io/gsrmarkets"}
+      - {company: "Salary Finance", url: "https://job-boards.eu.greenhouse.io/salaryfinancecareers"}
+      - {company: "B2C2", url: "https://job-boards.eu.greenhouse.io/b2c2"}
+      - {company: "Financial Times", url: "https://job-boards.eu.greenhouse.io/financialtimes33"}
+      - {company: "QuantCo", url: "https://jobs.lever.co/quantco-"}
+      - {company: "Ekimetrics", url: "https://jobs.lever.co/ekimetrics"}
+      - {company: "Deductive AI", url: "https://jobs.ashbyhq.com/deductive"}
+      - {company: "Cohere", url: "https://jobs.ashbyhq.com/cohere"}
+      # Cross-industry employers with in-house tech teams: the test is whether they hire
+      # undergraduates into technical roles, not whether they are a tech company (2026-09-23).
+      - {company: "Diageo", url: "https://diageo.wd3.myworkdayjobs.com/Diageo_Careers"}
+      - {company: "GSK", url: "https://gsk.wd5.myworkdayjobs.com/GSKCareers"}
+      - {company: "John Lewis Partnership", url: "https://jlp.wd3.myworkdayjobs.com/JLPjobs_careers"}
+      - {company: "Kraken Technologies", url: "https://jobs.ashbyhq.com/kraken.com"}
+      - {company: "National Grid", url: "https://ngs.wd1.myworkdayjobs.com/ngs_external_career_site_intern"}
+      - {company: "Nike", url: "https://nike.wd1.myworkdayjobs.com/nke"}
+      - {company: "Novartis", url: "https://novartis.wd3.myworkdayjobs.com/Novartis_Careers"}
+      - {company: "Octopus Energy", url: "https://jobs.lever.co/octoenergy"}
+      - {company: "Pfizer", url: "https://pfizer.wd1.myworkdayjobs.com/PfizerCareers"}
+      - {company: "Puma", url: "https://puma.wd502.myworkdayjobs.com/Jobs_at_Puma"}
+      - {company: "Unilever", url: "https://unilever.wd3.myworkdayjobs.com/Unilever_Early_Careers"}
+      # Target areas: AI, robotics, autonomy, defence tech (board slugs probed 2026-09-21).
+      - {company: "Helsing", url: "https://job-boards.greenhouse.io/helsing"}
+      - {company: "Improbable", url: "https://jobs.ashbyhq.com/improbable"}
+      - {company: "Ocado Group", url: "https://job-boards.greenhouse.io/ocadogroup"}
+      - {company: "Perplexity", url: "https://jobs.ashbyhq.com/perplexity"}
+      - {company: "Snowflake", url: "https://jobs.ashbyhq.com/snowflake"}
+      - {company: "Synthesia", url: "https://jobs.ashbyhq.com/synthesia"}
+      - {company: "Tractable", url: "https://jobs.ashbyhq.com/tractable"}
+      - {company: "Wayve", url: "https://job-boards.greenhouse.io/wayve"}
+      - {company: "Flagright", url: "https://jobs.ashbyhq.com/flagright.com"}
+      - {company: "iwoca", url: "https://jobs.ashbyhq.com/iwoca.co.uk"}
+      - {company: "Lendable", url: "https://jobs.ashbyhq.com/lendable"}
+      - {company: "Uncountable", url: "https://jobs.ashbyhq.com/uncountable"}
+      - {company: "The Exploration Company", url: "https://jobs.ashbyhq.com/the-exploration-company"}
+      - {company: "Notion", url: "https://jobs.ashbyhq.com/notion"}
+      - {company: "Capula Investment Management", url: "https://apply.workable.com/capula-investment-management-ltd/"}
+      - {company: "PolyAI", url: "https://apply.workable.com/poly-ai/"}
+      - {company: "Disperse", url: "https://apply.workable.com/disperse/"}
+      - {company: "BenevolentAI", url: "https://apply.workable.com/benevolentai/"}
+      - {company: "Magnite", url: "https://osv-rubicon.wd5.myworkdayjobs.com/MagniteCareers/job/x"}
+      - {company: "Mastercard", url: "https://mastercard.wd1.myworkdayjobs.com/en-US/Campus/job/x"}
+      - {company: "RTX", url: "https://globalhr.wd5.myworkdayjobs.com/en-US/REC_RTX_Ext_Gateway/job/x"}
+      - {company: "Cadence", url: "https://cadence.wd1.myworkdayjobs.com/en-US/Univ_Careers/job/x"}
+      - {company: "Workday", url: "https://workday.wd5.myworkdayjobs.com/Workday_Early_Career/job/x"}
+      # Found on bp's students and graduates page on 2026-09-16.
+      - {company: "bp", url: "https://bpinternational.wd3.myworkdayjobs.com/en-US/bpCareers/job/x"}
+
+    # --- What counts. Whole-word, case-insensitive matches. ---
+    # A student role: in the title or the platform's employment type.
+    student_terms: [intern, interns, internship, internships, placement, placements,
+                    industrial, "year in industry", sandwich, "spring week", "spring weeks",
+                    "spring insight", "spring programme", "spring program", "insight programme",
+                    "insight program", "insight week", "insight day", "work experience",
+                    "summer analyst", "off-cycle", "off cycle", "undergraduate programme",
+                    "spring internship", "discovery programme", "discovery program", "discovery week",
+                    "first-year programme", "first year programme", "emerging talent programme",
+                    "early careers programme", "student insight", "undergraduate insight",
+                    "technology insight", "summer placement", "undergraduate internship",
+                    "industrial year", "placement year", "sandwich placement", "undergraduate placement",
+                    "technology placement"]
+    # Never a student role for this candidate, whatever else the title says.
+    exclude_terms: [phd, "ph.d", mba, postdoc, senior, principal, manager, director, marketer,
+                    "head of", apprentice, apprenticeship, graduate, marketing, sales,
+                    recruitment, recruiting, "human resources", hr]
+    # Technology: in the title, or (tech_team_terms too) in the department/team.
+    tech_terms: [software, developer, "machine learning", ml, ai, "artificial intelligence",
+                 data, cyber, security, cloud, infrastructure, devops, sre, "site reliability",
+                 platform, backend, "back-end", "back end", frontend, "front-end", "front end",
+                 "full stack", "full-stack", quant, quantitative, technology, tech, it, digital,
+                 systems, network, networks, hardware, embedded, firmware, electronic,
+                 electronics, robotics, computer, computing, automation, product, analytics,
+                 algorithmic, trading technology, "research engineer", "research engineering"]
+    tech_team_terms: [engineering, engineer, r&d]
+    # A title naming one of these names a function that is not technical, so a
+    # programme carrying it is not the tech intake. Anything else - including a
+    # brand name like "Future Leaders" - leaves the programme firm-wide, and
+    # firm-wide programmes are read (the requirements decide, not the title).
+    non_tech_function_terms: [finance, financial, accounting, accountancy, audit, "internal audit",
+                              tax, treasury, actuarial, insurance, underwriting, claims, legal, law,
+                              paralegal, solicitor, compliance, "risk management", "credit risk",
+                              "human resources", hr, recruitment, "talent acquisition", marketing,
+                              brand, communications, "public relations", sales, "business development",
+                              "relationship management", "wealth management", "asset management",
+                              "private equity", "investment banking", "equity research", "real estate",
+                              property, surveying, procurement, "supply chain", logistics, merchandising,
+                              buying, retail, hospitality, "vacation scheme", "training contract",
+                              "customer service", facilities, "corporate finance", economics, policy,
+                              markets, "global markets", trading, trader, structuring, securities,
+                              investment, investments, banking, "capital markets", "fixed income",
+                              "equity capital", portfolio, "fund management",
+                              "project management", "programme management", operations, consulting,
+                              advisory]
+    # A field of study that is not computing. Named in a title, it is that
+    # discipline's intake, not the tech one, so the posting is not opened.
+    other_field_terms: [chemistry, chemical, biology, biological, biomedical, biochemistry,
+                        medicine, medical, nursing, midwifery, pharmacy, pharmaceutical, dentistry,
+                        veterinary, mechanical, civil, structural, architecture, architectural,
+                        aerospace, aeronautical, automotive, naval, marine, mining, geology,
+                        geoscience, geotechnical, agriculture, agricultural, food, textile, fashion,
+                        journalism, teaching, education, psychology, sociology, anthropology,
+                        history, languages, translation, sport, sports, fitness, tourism, travel,
+                        music, "fine art", film, theatre, photography, culinary, catering]
+    # UK: a country name anywhere in the location, or a UK place with no sign
+    # of a same-named place abroad (Cambridge MA, London Ontario).
+    uk_terms: ["united kingdom", uk, "u.k.", gb, "great britain", britain, england, scotland,
+               wales, "northern ireland"]
+    uk_places: [london, cambridge, oxford, bristol, manchester, edinburgh, glasgow, birmingham,
+                leeds, reading, belfast, cardiff, bath, sheffield, nottingham, newcastle,
+                liverpool, southampton, york, guildford, "milton keynes", coventry, warwick,
+                leicester, aberdeen, dundee, brighton, exeter, swindon, basingstoke,
+                farnborough, stevenage, chelmsford, norwich, derby, durham, lancaster,
+                bracknell, slough, "canary wharf", filton, cheltenham, crawley, harwell, didcot]
+    # Places abroad whose names contain a UK country name. Removed before the
+    # UK check, or "Sydney, New South Wales, Australia" reads as Wales.
+    uk_false_friends: ["new south wales", "new england"]
+    foreign_markers: [usa, "united states", us, massachusetts, ma, ontario, on, canada,
+                      "new york", texas, ohio, "new jersey"]
+
+browser:
+  # A persistent profile keeps cookies between runs, which means Cloudflare
+  # presents its check far less often. This is NOT a login and stores no
+  # credentials.
+  user_data_dir: "sessions/chrome"
+  channel: "chrome"
+  # Cloudflare's managed challenge is much more likely to clear in a headed
+  # browser. The scheduled task is registered with "run only when user is
+  # logged on" for this reason.
+  headless: false
+  viewport: {width: 1440, height: 900}
+  # How long to wait for an interstitial to clear on its own before giving up
+  # and skipping the source. Waiting is ordinary page loading; the challenge is
+  # never solved or bypassed.
+  challenge_grace_seconds: 20
+
+  # Text that indicates an anti-bot interstitial rather than real content.
+  # Seeing any of these aborts the source. It is never solved or worked around.
+  challenge_markers:
+    - "checking your browser"
+    - "just a moment"
+    - "cf-challenge"
+    - "verify you are human"
+    - "enable javascript and cookies to continue"
+    - "quick check needed"
+    - "confirm you're a real person"

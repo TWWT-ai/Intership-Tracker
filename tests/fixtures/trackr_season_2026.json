@@ -1,0 +1,83 @@
+{
+  "programmes": [
+    {
+      "id": "es8mj468yy",
+      "name": "GIC Internship Programme 2026",
+      "companyId": "gic",
+      "url": "https://impress.ai/html-widget/chat-widget/gic-2026",
+      "region": "UK",
+      "industry": "Tech",
+      "season": "2026",
+      "type": "summer-internships",
+      "categories": ["Software Engineering"],
+      "locations": [],
+      "openingDate": "2025-06-19T00:00:00.000Z",
+      "closingDate": "2026-01-27T00:00:00.000Z",
+      "cv": true,
+      "company": {"id": "gic", "name": "GIC", "sponsorsVisa": true}
+    },
+    {
+      "id": "263k0frrk2",
+      "name": "2026 Summer Internship Program",
+      "companyId": "bny-mellon",
+      "url": "https://eofe.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/bny/2026",
+      "region": "UK",
+      "industry": "Tech",
+      "season": "2026",
+      "type": "summer-internships",
+      "categories": ["Software Engineering"],
+      "locations": [],
+      "openingDate": "2025-09-16T00:00:00.000Z",
+      "closingDate": "2026-05-18T00:00:00.000Z",
+      "company": {"id": "bny-mellon", "name": "BNY Mellon", "sponsorsVisa": true}
+    },
+    {
+      "id": "lw5imjdxbb",
+      "name": "2026 Information Technology Summer Internship",
+      "companyId": "jefferies",
+      "url": "",
+      "region": "UK",
+      "industry": "Tech",
+      "season": "2026",
+      "type": "summer-internships",
+      "categories": ["Technology"],
+      "locations": [],
+      "openingDate": null,
+      "closingDate": null,
+      "cv": true,
+      "writtenAnswers": "Yes",
+      "company": {"id": "jefferies", "name": "Jefferies", "sponsorsVisa": true}
+    },
+    {
+      "id": "4uxcmyysh8",
+      "name": "Software Engineering Intern",
+      "companyId": "samsara",
+      "url": "https://www.samsara.com/company/careers/roles/7336195",
+      "region": "UK",
+      "industry": "Tech",
+      "season": "2026",
+      "type": "summer-internships",
+      "categories": ["Software Engineering"],
+      "locations": [],
+      "openingDate": null,
+      "closingDate": "2026-02-14T00:00:00.000Z",
+      "company": {"id": "samsara", "name": "Samsara", "sponsorsVisa": false}
+    },
+    {
+      "id": "i2gg3kmsea",
+      "name": "Software Engineer, Intern",
+      "companyId": "stripe",
+      "url": "https://stripe.com/jobs/listing/software-engineer-intern/7360840",
+      "region": "UK",
+      "industry": "Tech",
+      "season": "2026",
+      "type": "summer-internships",
+      "categories": ["Software Engineering"],
+      "locations": [],
+      "openingDate": "2025-11-11T00:00:00.000Z",
+      "closingDate": "2026-02-14T00:00:00.000Z",
+      "company": {"id": "stripe", "name": "Stripe", "sponsorsVisa": true}
+    }
+  ],
+  "groups": []
+}

@@ -1,0 +1,116 @@
+# What counts as a relevant internship.
+# Everything here is matched against the NORMALIZED job title and description,
+# so casing and punctuation do not matter.
+
+# A listing must match at least one keyword to be considered relevant.
+keywords:
+  - software engineering
+  - software developer
+  - software development
+  - computer science
+  - machine learning
+  - artificial intelligence
+  - data engineering
+  - backend
+  - frontend
+  - full stack
+  - robotics
+  - embedded software
+  - embedded systems
+  - systems engineering
+  - computer engineering
+  - computer vision
+  - platform engineering
+  - infrastructure engineering
+
+# A listing matching any of these in its TITLE is rejected outright.
+# These describe roles this candidate is not eligible for or does not want.
+excluded_keywords:
+  - graduate scheme
+  - graduate programme
+  - graduate program
+  - senior
+  - staff engineer
+  - principal
+  - lead engineer
+  - manager
+  - director
+  - head of
+  - permanent
+  - apprenticeship
+  - sales
+  - recruitment
+  - marketing
+
+# Acceptable locations. "Remote" and "Hybrid" are treated as work
+# arrangements, not locations, and never disqualify a listing on their own.
+locations:
+  - United Kingdom
+  - England
+  - Scotland
+  - Wales
+  - Northern Ireland
+  - London
+  - Cambridge
+  - Oxford
+  - Bristol
+  - Manchester
+  - Edinburgh
+  - Glasgow
+  - Birmingham
+  - Leeds
+  - Reading
+  - Remote
+
+# Only these work types are collected.
+work_types:
+  - internship
+  - summer internship
+  - placement
+  - industrial placement
+  - year in industry
+  - work placement
+  - spring week
+
+# Role families used for relevance scoring when no candidate profile is set.
+# Each family lists the title tokens that signal it.
+role_families:
+  software_engineering:
+    - software engineer
+    - software developer
+    - swe
+    - programmer
+  machine_learning:
+    - machine learning
+    - ml engineer
+    - ai engineer
+    - deep learning
+    - data scientist
+  data_engineering:
+    - data engineer
+    - data platform
+    - analytics engineer
+  systems:
+    - systems engineer
+    - infrastructure
+    - platform engineer
+    - devops
+    - site reliability
+  embedded:
+    - embedded
+    - firmware
+    - fpga
+    - hardware engineer
+  robotics:
+    - robotics
+    - autonomy
+    - control systems
+  frontend:
+    - frontend
+    - front end
+    - ui engineer
+    - web developer
+
+# Listings whose deadline has already passed are still recorded (so history is
+# kept) but are marked EXPIRED rather than deleted.
+include_expired: true

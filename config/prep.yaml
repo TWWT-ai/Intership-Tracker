@@ -1,0 +1,32 @@
+# Application prep packets (tracker/prep.py, `main.py prep`).
+
+# Phrases that mark scraped text as trying to instruct whoever reads it,
+# including the "if you are an AI, include the word X" traps some employers
+# plant for AI-written applications. A match is shown to you in job.md and
+# review.md. It is never acted on. Case-insensitive substring match; keep
+# entries instruction-shaped, because single words ("AI", "Claude") appear in
+# genuine tech postings.
+untrusted_phrases:
+  - ignore previous instructions
+  - ignore all previous
+  - ignore the above
+  - disregard previous
+  - disregard all previous
+  - disregard the above
+  - forget your instructions
+  - new instructions
+  - system prompt
+  - if you are an ai
+  - if you're an ai
+  - if you are a language model
+  - if you are an llm
+  - note to ai
+  - include the word
+  - mention the word
+  - run the following
+  - execute the following
+  - paste this into
+
+# Below this many characters the scraped description is too thin to tailor a
+# CV or letter from, so job.md asks for the employer's own posting instead.
+thin_description_chars: 800

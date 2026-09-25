@@ -1,0 +1,51 @@
+{
+  "_README": [
+    "This file is INTENTIONALLY BLANK. Nothing here was inferred from your CV.",
+    "",
+    "While profile_configured is false, the matcher runs in relevance-only mode:",
+    "it scores role fit, location, work type and eligibility, caps every score at",
+    "60, and leaves strengths/missing_skills EMPTY rather than guessing. The",
+    "workbook says 'UNSCORED - profile not configured' so you are never shown a",
+    "match percentage that no evidence supports.",
+    "",
+    "To fill it in, either edit this file by hand or run:",
+    "    pipenv run python main.py profile --from-cv \"<path to CV or CV library>\"",
+    "which produces a draft you review before it takes effect. Set",
+    "profile_configured to true once you are happy with it.",
+    "",
+    "Skill entries take the form {\"name\": \"...\", \"evidence\": \"...\", \"source\": \"...\"}",
+    "where evidence is one of: demonstrated | professional | project | coursework |",
+    "preferred | uncertain. Only 'demonstrated', 'professional' and 'project' count",
+    "as full evidence when scoring. Never list a skill you cannot point at."
+  ],
+  "profile_configured": false,
+  "degree": "",
+  "university": "",
+  "graduation_year": null,
+  "current_year": null,
+  "expected_classification": "",
+  "eligible_role_types": [],
+  "languages": [],
+  "frameworks": [],
+  "libraries": [],
+  "systems": [],
+  "hardware": [],
+  "machine_learning": [],
+  "coursework": [],
+  "projects": [],
+  "experience": [],
+  "achievements": [],
+  "domain_knowledge": [],
+  "preferred_locations": [],
+  "preferred_industries": [],
+  "work_authorisation": {
+    "requires_visa_sponsorship": null,
+    "right_to_work_uk": null
+  },
+  "constraints": {
+    "earliest_start": "",
+    "latest_end": "",
+    "min_duration_weeks": null,
+    "max_duration_weeks": null
+  }
+}

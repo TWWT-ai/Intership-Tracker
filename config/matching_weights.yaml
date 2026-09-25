@@ -1,0 +1,89 @@
+# How a 0-100 match score is assembled.
+# Weights must sum to 100. Each component scores 0.0-1.0 internally and is
+# then multiplied by its weight.
+
+weights:
+  technical_skills: 30
+  programming_languages: 15
+  projects: 15
+  education: 15
+  eligibility: 15
+  location: 5
+  experience: 5
+
+# Score bands -> category label.
+categories:
+  - {min: 90, max: 100, label: "Excellent"}
+  - {min: 80, max: 89,  label: "Strong"}
+  - {min: 70, max: 79,  label: "Good"}
+  - {min: 60, max: 69,  label: "Possible"}
+  - {min: 0,  max: 59,  label: "Low Priority"}
+
+# A requirement's weight within its component depends on how the posting
+# phrases it. Anything the posting marks as required counts for more than
+# something it merely prefers.
+requirement_multipliers:
+  required: 1.0
+  preferred: 0.6
+  nice_to_have: 0.3
+  irrelevant: 0.0
+
+# Phrases used to classify a requirement line into the buckets above.
+requirement_markers:
+  required:
+    - "required"
+    - "must have"
+    - "essential"
+    - "you will need"
+    - "you must"
+    - "minimum requirement"
+    - "we require"
+  preferred:
+    - "preferred"
+    - "desirable"
+    - "advantageous"
+    - "ideally"
+    - "we'd love"
+    - "would be great"
+  nice_to_have:
+    - "nice to have"
+    - "bonus"
+    - "plus"
+    - "exposure to"
+    - "familiarity with"
+
+# Behaviour when data/profile.json has not been filled in yet.
+# The matcher cannot score skills against an empty profile, so it falls back
+# to a relevance-only pass and refuses to claim strengths it cannot evidence.
+blank_profile:
+  enabled: true
+  # Only these components are scored; the rest are skipped entirely.
+  active_components: [eligibility, location]
+  # Relevance to the configured role families, weighted into the score.
+  role_relevance_weight: 60
+  # No score may exceed this until a real profile exists.
+  score_cap: 60
+  category_label: "UNSCORED - profile not configured"
+
+# Priority is deliberately NOT a pure function of match score.
+# A near deadline outranks a slightly better match that closes in months.
+priority:
+  # Base band from match score.
+  score_thresholds:
+    high: 75
+    medium: 55
+  # Days-until-deadline promotions, applied after the base band.
+  deadline_promotions:
+    - {within_days: 7,  promote_to: "HIGH", min_score: 50}
+    - {within_days: 14, promote_to: "HIGH", min_score: 65}
+    - {within_days: 30, promote_to: "MEDIUM", min_score: 45}
+  # Jobs in these states can never be HIGH regardless of score.
+  demote_states:
+    open_status: ["CLOSED"]
+    # Any status at all also demotes (tracker/match.py): an application in
+    # progress should not occupy the top of the sheet. Listed for reference.
+    application_status: ["Application Submitted", "Online Assessment", "Video Interview",
+                         "Second Stage", "Assessment Centre", "Offer", "Rejected", "Withdrawn"]
+  # A job whose open status could not be confirmed is capped at MEDIUM, so an
+  # unverifiable listing never displaces a confirmed-open one at the top.
+  unknown_open_status_cap: "MEDIUM"
