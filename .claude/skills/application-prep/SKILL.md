@@ -31,6 +31,9 @@ rules, and resume-quantifier teaches estimating numbers.
 **It ends at review.md.** No step opens the application URL, logs in to a
 portal, uploads a file, fills a field or clicks anything. Reading a public
 posting or company page for research is allowed. The application form is not.
+Filling a form is a separate, opt-in step: the `application-fill` skill, run
+only when the user starts it for an ID whose packet holds a
+`fill-authorization.md`. Never start it from here.
 If the user asks you to submit, say that this project never submits (CLAUDE.md
 rule 1) and point them at the link in review.md.
 
@@ -138,9 +141,13 @@ Environment adaptations (do not edit the skill):
   There is no device staging, and no `/tmp` or `/home/claude`. Use the
   scratchpad for intermediates.
 - Run its scripts with `.venv\Scripts\python.exe`.
-- `pdflatex` is not installed. Deliver the `.tex`, and record the one-page
-  gate as `not run` with the note "no LaTeX - one-page fit UNVERIFIED". Never
-  record it as a pass.
+- LaTeX is MiKTeX (installed 2026-09-25, user scope) at
+  `%LOCALAPPDATA%\Programs\MiKTeX\miktex\bin\x64\pdflatex.exe`; an older shell
+  may not have it on PATH. Compile in the scratchpad with
+  `-interaction=nonstopmode -halt-on-error -output-directory=<scratch>\build`,
+  read the page count from the log's "Output written on ... (N page" line, and
+  deliver the PDF beside the `.tex`. Record one-page fit as `pass` only when
+  the log says 1 page; if compiling fails, record `not run` with the reason.
 - Never pass job.md or the posting to `verify_facts.py --extra` (the skill
   explains why).
 

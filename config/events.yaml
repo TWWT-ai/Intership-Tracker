@@ -1,0 +1,34 @@
+# The hackathon tracker (tracker/events.py, data/hackathons.xlsx).
+
+# Values the researcher may give. Anything else is stored as the fallback,
+# never guessed into the nearest match.
+statuses: [Registration open, Registration not yet open, Applications required,
+           Waitlist, Upcoming, Date TBC, Recurring / annual - date TBC,
+           Registration closed, Completed]
+my_statuses: [Interested, Registered, Applied, Accepted, Attended, Not going]
+yes_no_unclear: ["Yes", "No", Unclear]
+costs: [Free, Paid, Unknown]
+regions: [England, Scotland, Wales, Northern Ireland, Online, Multiple, Unknown]
+
+# How an event was found; the Dashboard counts these to show which
+# strategies pay off. Every event_search.sweep_plan round names one.
+discovery_methods: [Event Format Search, City Search, Technical Domain Search,
+                    University Search, Society Search, Company Search,
+                    Organisation Search, Platform Search, Recurring Event Search,
+                    Previous Event Follow-up, Manual Report, Other]
+
+# Listing platforms: kept as Source URL once the organiser's own page is known.
+aggregator_hosts: [devpost.com, eventbrite.co.uk, eventbrite.com, lu.ma, luma.com,
+                   mlh.io, meetup.com, hackathon.com, taikai.network, dorahacks.io,
+                   ctftime.org, kaggle.com, hackathons.org.uk, createwith.com,
+                   brightnetwork.co.uk]
+
+stale_after_days: 14
+# A lead (found, no page yet) is re-searched each sweep for this long, then
+# reported as given up rather than kept forever.
+lead_max_age_days: 42
+
+font: Calibri
+# Days Until Deadline colours: <= first urgent, <= second attention,
+# <= third upcoming, beyond that uncoloured.
+deadline_bands: [3, 7, 14]

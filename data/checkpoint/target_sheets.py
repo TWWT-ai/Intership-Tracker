@@ -565,6 +565,8 @@ def for_sheet(name):
         picked = eligible_rows({"Algorithm Engineer"})[0]
     else:
         picked = eligible_rows({"AI / ML", "Computer Vision", "AI Software Engineering"})[0]
+    # A role whose deadline has passed is left off; no deadline stated, it stays.
+    picked = [r for r in picked if not (r["_deadline"] and r["_deadline"] < str(TODAY))]
     active = sorted((r for r in picked if not closed(r)),
                     key=lambda r: (r["_deadline"] or "9999", r["COMPANY"].casefold(), r["ROLE"].casefold()))
     gone = sorted((r for r in picked if closed(r)), key=lambda r: (r["COMPANY"].casefold(), r["ROLE"].casefold()))
@@ -572,6 +574,19 @@ def for_sheet(name):
 
 
 # ---------------------------------------------------------------- write
+#: Written as real dates, blank when unknown: Excel's date filter and sort need
+#: every cell in the column to be a date. "Not stated" text there breaks both.
+DATE_COLUMNS = ("START DATE", "DATE POSTED", "APPLICATION DEADLINE", "DATE FOUND")
+
+
+def cell_value(row: dict, title: str):
+    value = row.get(title, "")
+    if title in DATE_COLUMNS:
+        text = str(value or "")[:10]
+        return date.fromisoformat(text) if re.fullmatch(r"\d{4}-\d\d-\d\d", text) else None
+    return value
+
+
 if (ROOT / "data" / "~$internships.xlsx").exists():
     sys.exit("Excel has the workbook open - close it first.")
 wb = load_workbook(WORKBOOK)
@@ -589,16 +604,16 @@ for position, name in enumerate(SHEETS, start=1):
         ws.column_dimensions[get_column_letter(col)].width = WIDTHS[title]
     active, gone = for_sheet(name)
     r = 1
-    for block, banner in ((active, None), (gone, "CLOSED / MONITOR - deadline passed or listing closed")):
-        if banner and block:
-            r += 1
-            cell = ws.cell(r, 1, f"{banner} ({len(block)})")
-            cell.fill, cell.font = BANNER_FILL, Font(bold=True)
-            ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=len(columns))
+    # Closed rows follow the active ones with no banner row between: a banner
+    # (merged or not) is a row Excel would sort and filter as if it were data.
+    # STATUS says CLOSED instead.
+    for block in (active, gone):
         for row in block:
             r += 1
             for col, title in enumerate(columns, start=1):
-                cell = ws.cell(r, col, row.get(title, ""))
+                cell = ws.cell(r, col, cell_value(row, title))
+                if title in DATE_COLUMNS:
+                    cell.number_format = "yyyy-mm-dd"
                 cell.alignment = Alignment(vertical="top", wrap_text=title in (
                     "ROLE", "ROLE CATEGORY", "ELIGIBILITY / YEAR REQUIREMENT", "PROGRAMMING LANGUAGES",
                     "KEY TECHNICAL SKILLS", "KEY KNOWLEDGE AREAS", "DESCRIPTION / RESPONSIBILITIES",
@@ -608,6 +623,8 @@ for position, name in enumerate(SHEETS, start=1):
                     cell.font = Font(color="0563C1", underline="single")
                 if title.startswith("MATCH: ") and MATCH_FILL.get(cell.value):
                     cell.fill = PatternFill("solid", fgColor=MATCH_FILL[cell.value])
+                if block is gone:
+                    cell.fill = BANNER_FILL
             ws.row_dimensions[r].height = 42
     ws.freeze_panes = "C2"
     ws.auto_filter.ref = f"A1:{get_column_letter(len(columns))}{max(r, 2)}"
@@ -634,12 +651,16 @@ for name in SHEETS:
     active, gone = for_sheet(name)
     if check.max_row - 1 < len(active):
         problems.append((name, "rows missing", check.max_row - 1, len(active)))
+    if check.merged_cells.ranges:
+        problems.append((name, "merged cells", [str(m) for m in check.merged_cells.ranges][:3]))
     for r in range(2, check.max_row + 1):
         company = check.cell(r, 1).value or ""
-        if company.startswith("CLOSED / MONITOR"):
-            continue
         if company and not check.cell(r, 3).value:
             problems.append((name, r, "row with no ROLE CATEGORY"))
+        for title in DATE_COLUMNS:
+            value = check.cell(r, sheet_columns(name).index(title) + 1).value
+            if value is not None and not isinstance(value, (date, datetime)):
+                problems.append((name, r, title, "not a date", value))
 print("verification problems:", len(problems))
 for p in problems[:20]:
     print("   ", p)

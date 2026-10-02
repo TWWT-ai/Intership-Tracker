@@ -7,7 +7,7 @@ from openpyxl import load_workbook
 
 from tests.conftest import make_job
 from tracker import config, dedupe, excel
-from tracker.models import ApplicationStatus, OpenStatus, Priority
+from tracker.models import ApplicationStatus, ChangeType, OpenStatus, Priority
 
 
 def cell(ws, row: int, column: str):
@@ -325,6 +325,33 @@ class TestSorting:
         assert ordered[0].company == "HighCo"
         assert ordered[-1].company == "ClosedCo"
 
+    def test_new_jobs_lead_then_nearest_deadline(self):
+        seen = make_job(company="SeenCo", title="Backend Engineering Intern",
+                        deadline=date.today() + timedelta(days=2), open_status=OpenStatus.OPEN)
+        seen.change_type = ChangeType.UNCHANGED
+        seen.priority = Priority.HIGH
+        later = make_job(company="LaterCo", title="Robotics Intern",
+                         deadline=date.today() + timedelta(days=40), open_status=OpenStatus.OPEN)
+        later.change_type = ChangeType.UPDATED
+        later.priority = Priority.HIGH
+        soon = make_job(company="SoonCo", title="Data Intern",
+                        deadline=date.today() + timedelta(days=5), open_status=OpenStatus.OPEN)
+        soon.change_type = ChangeType.UNCHANGED
+        soon.priority = Priority.LOW
+        fresh = make_job(company="FreshCo", title="ML Intern", open_status=OpenStatus.OPEN)
+        fresh.change_type = ChangeType.NEW
+        fresh.priority = Priority.LOW
+
+        ordered = excel.sort_jobs([later, soon, seen, fresh])
+        assert [j.company for j in ordered] == ["FreshCo", "SeenCo", "SoonCo", "LaterCo"]
+
+    def test_a_new_job_that_is_already_closed_still_sinks(self):
+        dead = make_job(company="DeadCo", open_status=OpenStatus.CLOSED)
+        dead.change_type = ChangeType.NEW
+        old = make_job(company="OldCo", open_status=OpenStatus.OPEN)
+        old.change_type = ChangeType.UNCHANGED
+        assert [j.company for j in excel.sort_jobs([dead, old])] == ["OldCo", "DeadCo"]
+
     def test_expired_jobs_sort_below_live_ones(self):
         expired = make_job(company="ExpiredCo", title="Backend Engineering Intern",
                            deadline=date.today() - timedelta(days=3),
@@ -337,6 +364,19 @@ class TestSorting:
 
         ordered = excel.sort_jobs([expired, live])
         assert ordered[0].company == "LiveCo"
+
+    def test_past_deadline_roles_leave_the_sheet_unless_you_touched_them(self):
+        passed = date.today() - timedelta(days=1)
+        gone = make_job(company="GoneCo", title="Data Intern", deadline=passed)
+        applied = make_job(company="AppliedCo", title="Software Intern", deadline=passed)
+        applied.status = ApplicationStatus.APPLIED
+        noted = make_job(company="NotedCo", title="ML Intern", deadline=passed)
+        noted.notes = "ask about the 2028 round"
+        today = make_job(company="TodayCo", title="Robotics Intern", deadline=date.today())
+        undated = make_job(company="UndatedCo", title="Quant Intern")
+        ws = load_workbook(build([gone, applied, noted, today, undated]))[excel.SHEET_JOBS]
+        companies = {cell(ws, r, "Company").value for r in range(2, ws.max_row + 1)}
+        assert companies == {"AppliedCo", "NotedCo", "TodayCo", "UndatedCo"}
 
     def test_closed_jobs_are_kept_not_deleted(self):
         jobs = [make_job(company="ClosedCo", open_status=OpenStatus.CLOSED)]

@@ -174,6 +174,9 @@ class Job:
     classification_basis: str = ""    # what decided work_type
     experience_requirements: str = ""
     description: str = ""
+    # The listing URL (one of `sources`) the description was read from. The
+    # role filter only trusts text it can tie to this row's own posting.
+    description_source: str = ""
     skills: list[str] = field(default_factory=list)
     programming_languages: list[str] = field(default_factory=list)
     technologies: list[str] = field(default_factory=list)
@@ -209,6 +212,36 @@ class Job:
     # ledger on every write (tracker/status_sync.py). Never user input.
     status_evidence: str = ""
 
+    # Assessment (tracker/relevance.py, deadline_extract.py, role_filter.py):
+    # separate findings, each with its reason and quotes from the posting.
+    role_relevance: str = ""          # TECHNICAL | NOT_TECHNICAL | UNCLEAR
+    role_relevance_reason: str = ""
+    role_relevance_evidence: str = ""
+    study_level: str = ""             # CURRENT_UNDERGRADUATE | GRADUATE_ONLY | POSTGRADUATE_ONLY | ...
+    study_level_reason: str = ""
+    study_level_evidence: str = ""
+    degree_subject_fit: str = ""      # CS_REQUIRED | CS_ACCEPTED | ANY_DISCIPLINE | EQUIVALENCE_UNCLEAR | ...
+    degree_subject_reason: str = ""
+    degree_subject_evidence: str = ""
+    assessment_text_source: str = ""  # which listing the text came from, and any not used
+    # Deadline evidence. `deadline` is what the sheet shows: the employer's date
+    # where confirmed; `deadline_provisional` is an earlier conflicting date,
+    # kept apart and never written over it.
+    deadline_status: str = ""         # CONFIRMED | LISTED | CONFLICT | AMBIGUOUS | ... | NONE
+    deadline_reason: str = ""
+    deadline_confirmed: date | None = None
+    deadline_provisional: date | None = None
+    deadline_evidence: list[dict] = field(default_factory=list)
+    # Explicit closure seen on the employer's own posting (closed marker, 404/410).
+    closed_evidence: str = ""
+    # Whether the row stays on the Internships sheet, and why.
+    sheet_decision: str = ""          # SHOW | HIDE
+    sheet_reason: str = ""
+    # Verification coverage, carried between runs.
+    last_checked: str = ""
+    check_outcome: str = ""
+    checks_attempted: int = 0
+
     def fingerprint(self) -> str:
         """Stable content hash used to look up this job's permanent ID.
 
@@ -241,7 +274,8 @@ class Job:
         """Inverse of to_dict. Unknown keys are ignored, so a snapshot written
         by an older version stays loadable after the schema grows a field."""
         known = {f.name for f in fields(cls)}
-        dates = {"start_date", "date_posted", "deadline", "listed_deadline", "date_found", "last_updated"}
+        dates = {"start_date", "date_posted", "deadline", "listed_deadline", "date_found", "last_updated",
+                 "deadline_confirmed", "deadline_provisional"}
         enums = {"open_status": OpenStatus, "priority": Priority,
                  "status": ApplicationStatus, "change_type": ChangeType}
         kwargs: dict[str, Any] = {}

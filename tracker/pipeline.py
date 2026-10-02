@@ -193,6 +193,14 @@ def run_daily(only: str | None = None, skip_verify: bool = False, dry_run: bool 
             graduation.apply(job, f"{job.year_of_study}. {job.description}", profile)
             eligibility.assess(job, job.description, profile)
 
+        # The assessment reads each row's own posting text; off until approved.
+        from tracker import role_filter
+        if role_filter.enabled():
+            role_filter.assess_all(merged)
+            shown = sum(1 for j in merged if j.sheet_decision == role_filter.SHOW)
+            echo(f"[Assessment] {len(merged)} roles assessed - {shown} shown, {len(merged) - shown} hidden "
+                 "on firm evidence")
+
         # Provisional scoring so the verification budget can be spent on the
         # rows that matter most.
         _score_all(merged, profile, filters, weights)
@@ -311,7 +319,7 @@ def _save_previous(jobs: list[Job]) -> None:
 
 #: Deadline sources that come from reading a real page. Only these carry
 #: forward: a listed deadline is re-read from its listing every run.
-_VERIFIED_DEADLINE_SOURCES = ("job-page", "employer-ats")
+_VERIFIED_DEADLINE_SOURCES = ("job-page", "employer-ats", "employer-page")
 
 
 def _restore_state(jobs: list[Job], previous: dict[str, Job]) -> None:
@@ -340,6 +348,14 @@ def _restore_state(jobs: list[Job], previous: dict[str, Job]) -> None:
             programme.carry(job, old)
             graduation.carry(job, old)
             eligibility.carry(job, old)
+            # Assessment evidence from pages read on earlier nights: a page is
+            # not re-read every run, so what it said must travel with the row.
+            job.deadline_evidence = [c for c in old.deadline_evidence if c.get("method") == "employer page"]
+            job.closed_evidence = old.closed_evidence
+            job.last_checked, job.check_outcome = old.last_checked, old.check_outcome
+            job.checks_attempted = old.checks_attempted
+            if old.description_source.startswith("page:") and not job.description_source.startswith("page:"):
+                job.description, job.description_source = old.description, old.description_source
 
         # The workbook is authoritative for status: the user may have edited it
         # since the last run.
@@ -425,5 +441,24 @@ def _summary(
         "high": sum(1 for j in jobs if j.priority is Priority.HIGH),
         "medium": sum(1 for j in jobs if j.priority is Priority.MEDIUM),
         "low": sum(1 for j in jobs if j.priority is Priority.LOW),
-        "notes": ("blocked/failed: " + ", ".join(failed)) if failed else "",
+        "notes": "; ".join(filter(None, [("blocked/failed: " + ", ".join(failed)) if failed else "",
+                                         _coverage_note(jobs, stats)])),
     }
+
+
+def _coverage_note(jobs: list[Job], stats) -> str:
+    """The Runs sheet line saying how much the employer pages confirmed, and
+    what is still unchecked and why. Only once the assessment is on."""
+    from tracker import role_filter
+
+    if not role_filter.enabled() or not jobs:
+        return ""
+    from collections import Counter
+
+    confirmed = sum(1 for j in jobs if j.deadline_status == "CONFIRMED")
+    listed = sum(1 for j in jobs if j.deadline_status == "LISTED")
+    outcomes = (stats.outcomes if stats else {}) or {}
+    unchecked = Counter(j.check_outcome for j in jobs if j.check_outcome and j.check_outcome != "checked")
+    return (f"employer pages checked this run {outcomes.get('checked', 0)}; deadlines employer-confirmed "
+            f"{confirmed}, listed only (NOT confirmed) {listed}; unchecked: "
+            + ", ".join(f"{k} {v}" for k, v in unchecked.most_common()))

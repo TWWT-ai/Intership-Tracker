@@ -68,8 +68,14 @@ tracker/
   deadlines.py          urgency buckets
   excel.py              the workbook. Owns status preservation
   status_sync.py        email evidence -> forward-only status advances (+ ledger)
+  relevance.py          role relevance / study level / degree subject from the posting's own text
+  deadline_extract.py   every deadline a posting states, with evidence; never guessed
+  role_filter.py        the assessment applied to the sheet (gated) + the read-only dry run
   prep.py               one job's review packet in data/applications/<ID>/; offline
   pipeline.py           daily orchestration
+  events.py             hackathon tracker: trust boundary, dedupe, leads, computed status
+  event_search.py       hackathon tracker: the weekly rotating search plan
+  events_excel.py       hackathon tracker: data/hackathons.xlsx (Events + 3 views)
 sources/
   fetch.py              robots guard, rate limiter, HTTP, browser
   base.py               build_job(): the single normalization funnel
@@ -85,15 +91,19 @@ sources/
 scripts/
   daily_then_format.py      the scheduled scan: main.py daily, then the layout pass
   statuses_then_format.py   the email sync: main.py statuses, then the layout pass
+  calendar_sync.py          deadline-reminder plan for Google Calendar (+ ledger)
   register_task.ps1         registers the Windows task (runs only while logged on)
 data/checkpoint/
-  technical_programmes.py   the layout pass: drops non-technical rows, merges
-                            Company cells, verifies, then replaces the workbook
+  technical_programmes.py   the layout pass: drops non-technical rows, keeps the
+                            scan's order, verifies, then replaces the workbook
   target_sheets.py          Algorithm Engineer / AI roles / FDE sheets
   (the rest)                one-off research and repair scripts, not in the run
 .claude/skills/application-prep/
   SKILL.md                  runs tailor-cv, write-cover-letter,
                             interview-answer-builder against one packet; stops at review
+.claude/skills/application-fill/
+  SKILL.md                  opt-in, per ID: fills one employer form from the profile and
+                            approved materials; stops at the final review page, never submits
 ```
 
 ## How a run flows
@@ -142,6 +152,8 @@ pipenv run python main.py search --source trackr                 # one source, p
 pipenv run python main.py statuses --dry-run                     # email sync preview
 pipenv run python main.py prep INT-000123                        # review packet for one job
 pipenv run python data/checkpoint/technical_programmes.py --check  # verify layout, no write
+pipenv run python main.py events --plan                          # hackathon sweep plan
+pipenv run python main.py events --ingest data/state/event_candidates.json  # merge a sweep
 ```
 
 There is no linter or build step. If the scheduler or a script bypasses
@@ -154,7 +166,7 @@ nothing. Ask the user to close Excel. Never delete the lock file.
 
 ## Testing
 
-462 tests, all offline against fixtures in `tests/fixtures/`. **No test may make
+624 tests, all offline against fixtures in `tests/fixtures/`. **No test may make
 a network request.**
 
 These four exist because they encode promises to the user. Do not weaken them:
@@ -253,6 +265,13 @@ touch the real workbook.
   user state; do not remove that.
 - **Chrome renders XML in a viewer**, so `page.content()` on a sitemap returns an
   HTML wrapper. `_parse_urlset` handles both that and raw XML.
+- **No merged cells, and date columns hold dates.** Excel will not sort a
+  range with merged cells of different sizes, and a text date ("Not stated")
+  drops out of the date filter. Unknown dates are blank. Both layout scripts
+  verify this. Row order is `excel.sort_jobs`: new this scan (`change_type`
+  NEW), then nearest deadline, dead roles last. A role past its deadline is
+  not written at all unless it has a user status or note (`excel.write`); it
+  stays in last_run.json, and an email advancing it brings it back.
 - **openpyxl writes formulas without cached values.** Avoid formulas in the
   workbook; compute in Python and write values.
 - **The Internships column layout is `config/workbook.yaml`**, not the sheet.
@@ -296,9 +315,55 @@ touch the real workbook.
   materials.json only points at them. The packet reads only whether a profile
   fact is set, never its value. Recording the application stays with the
   dropdown, the email sync and the user-run `apply`.
+- **Filling a form is a separate Claude step, not code.** `application-fill`
+  runs only when the user starts it for an ID with a
+  `data/applications/<ID>/fill-authorization.md`. It fills only from
+  profile.json, the approved CV and questions.md; never submits, never creates
+  an account or types a password, never answers eligibility or diversity
+  questions, and never touches the workbook. Save and Continue and file upload
+  follow the choices in that file; PENDING means stop before Save and Continue
+  and let the user attach files. No Python code opens or posts a form (rule 1).
+- **Calendar reminders are planned in Python, written by Claude.** The 23:00
+  task runs `calendar_sync.py plan` (one event per deadline day, 08:30 London,
+  popups 7/3/1 days before, roles with any status left out), carries the plan
+  out with the Calendar connector, then `record`s the event ids in
+  `data/state/calendar_events.json`. Only recorded dates count, so a failed
+  write is retried. A day with nothing left is cleared, never deleted.
+- **The assessment judges the posting, never the title** (`tracker/relevance.py`,
+  `deadline_extract.py`, `role_filter.py`; phrases in `config/relevance.yaml`
+  and `verification.yaml`). Separate findings, never one score: role relevance,
+  study level, degree subject, Eligible for You, deadline - each with a reason
+  and the posting's words. Text counts only if it belongs to the row's own
+  listing for the same place (merges can carry another city's posting: Lloyds
+  `INT-001157` holds Leeds' Workday posting). AI / Data Science / integrated
+  master's are not assumed equivalent to a CS undergraduate degree.
+  A row leaves the sheet only on `STRONG_AGAINST` evidence, an
+  employer-CONFIRMED passed deadline, or an explicitly closed employer posting;
+  a passed LISTED date keeps it visible as REVIEW and first in the
+  verification queue. The Deadline column shows the employer's date; an
+  earlier conflicting one is `deadline_provisional`, kept apart (and its own
+  "(provisional)" calendar line). Numeric dates are read in the order the
+  SOURCE states (`<html lang>`, URL locale, a platform in
+  `platform_date_order` only once checked) - otherwise AMBIGUOUS. Pages are
+  judged by content, not URL: a posting at `/apply` is read, a sign-in /
+  upload / applicant-data form is an application step and is not. All of it
+  is OFF until `apply_to_workbook: true`; `main.py assess --dry-run` shows the
+  effect and writes only `data/checkpoint/assess-dry-run/`; `--apply` refuses
+  while it is off.
 - **Notes is user-only.** No adapter or scorer may write to `job.notes`;
   `build_job()` has no `notes` parameter on purpose. Platform facts go in their
   own fields (`cv`, `written_answers`, `cover_letter`) or the description.
+
+- **The hackathon tracker is a separate workbook** (`data/hackathons.xlsx`,
+  store `data/state/events.json`). Claude finds events (`skills/event-researcher/`);
+  Python validates, dedupes and renders them. Events are included by what
+  participants do, never by the word "hackathon". `config/event_search.yaml` is
+  examples, not a whitelist, and a missed event is fixed by generalising there,
+  never by adding its name. A candidate with no http(s) URL becomes a lead
+  (`event_leads.json`), never a row. Status, Action and the day counts are
+  computed at render, and the daily run re-renders. My Status and My Notes are
+  read back from the Events sheet only; Dashboard, My Events and Review Queue
+  are regenerated views.
 
 ## When the user asks to loosen something
 
@@ -314,7 +379,7 @@ Ask what went wrong first.
 
 ## Skills
 
-`skills/` holds six SKILL.md files carrying the judgement around each stage:
+`skills/` holds seven SKILL.md files carrying the judgement around each stage:
 `cv-analyzer`, `job-deduplicator`, `job-matcher`, `deadline-monitor`,
-`application-tracker`, `job-researcher`. Read the relevant one before changing
+`application-tracker`, `job-researcher`, `event-researcher` (the hackathon sweep). Read the relevant one before changing
 that part of the pipeline.

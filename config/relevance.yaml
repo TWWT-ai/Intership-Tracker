@@ -1,0 +1,236 @@
+# Role assessment: separate findings read from the posting's own text, from
+# the listing that belongs to that Tracker ID - never the title alone.
+# Logic: tracker/relevance.py (role, study level, degree subject),
+# tracker/deadline_extract.py (deadline), tracker/role_filter.py (the sheet).
+#
+# A row leaves the Internships sheet only on firm, quoted evidence: role
+# NOT_TECHNICAL, study level GRADUATE_ONLY / POSTGRADUATE_ONLY / EXPERIENCED,
+# or a required OTHER_SUBJECT_ONLY - or an employer-confirmed deadline that
+# has passed, or an explicitly closed posting. Everything unclear or not yet
+# assessed stays visible for review. A row with the user's status or note
+# never leaves.
+#
+# Phrases are matched case-insensitively on word boundaries; a space also
+# matches "-", "/", "&" or several spaces.
+
+# Off until the user approves the dry run (`main.py assess --dry-run`). While
+# false, nothing here changes the workbook, the nightly scan, verification or
+# the calendar. True: the rules above decide the sheet, an Assessment sheet
+# explains every row, and verification gathers deadline evidence.
+apply_to_workbook: false
+
+# Shown in every dry-run report for the user to review. Never acted on: the
+# profile is only changed by the user.
+profile_review_note: >-
+  data/profile.json says graduation_year 2029, but your CVs say you graduate
+  in June 2028. Personal eligibility (Eligible for You) uses the profile as
+  configured. Please confirm which is right; nothing changes it automatically.
+
+# Towns that name a posting's place, on top of careers.uk_places, so a
+# listing for another office is recognised as such.
+extra_places: [chester, watford, halifax, northampton, knutsford, gloucester, cheltenham, stevenage,
+               farnborough, filton, broughton, barrow, telford, lincoln, hull, peterborough, derby,
+               luton, warrington, preston, bournemouth, ipswich, norwich, sunderland, crewe, harrogate,
+               portsmouth, plymouth, chelmsford, woking, slough, maidenhead, bracknell, wolverhampton]
+
+# Text shorter than this cannot show duties, requirements and eligibility.
+min_text_chars: 400
+
+# Section headings as they appear inside a flattened posting. A heading counts
+# where a sentence starts or where it is followed by ":" or "?".
+headings:
+  duties: ["what you'll do", "what you will do", "what you'll be doing", "what you will be doing",
+           "what will you be doing", "what you could be doing", "the work you could be doing",
+           "you could gain experience in", "you'll gain experience in", "what the role involves",
+           "the role involves", "responsibilities", "your responsibilities", "key responsibilities",
+           "main responsibilities", "accountabilities", "purpose of the role", "about the role",
+           "the role", "your role", "role overview", "role description", "job description",
+           "the opportunity", "day to day", "day-to-day", "a day in the life", "what you'll work on",
+           "what you will work on", "your day", "the job", "job purpose", "what you will learn",
+           "what you'll learn", "the programme", "the placement", "the internship",
+           "about the internship", "about the placement", "about the programme", "role summary",
+           "position summary", "key tasks", "duties", "your duties", "what's involved"]
+  requirements: ["requirements", "what you need", "what you need to apply", "what do you need",
+                 "what we're looking for", "what we are looking for", "who we're looking for",
+                 "who we are looking for", "who you are", "about you", "you will have", "you'll have",
+                 "you will need", "you'll need", "skills and experience", "skills & experience",
+                 "qualifications", "essential criteria", "desirable criteria", "essential skills",
+                 "eligibility", "eligibility criteria", "who can apply", "entry requirements",
+                 "minimum qualifications", "preferred qualifications", "basic qualifications",
+                 "what you'll bring", "what you will bring", "the ideal candidate", "person specification",
+                 "requirements and experience", "we'd love to hear from you if", "to be considered",
+                 "person specifications", "what we're looking for from you", "what we are looking for from you",
+                 "your skills", "skills required", "key skills", "about you and your skills"]
+  background: ["about us", "who we are", "about the company", "about the team", "our team", "benefits",
+               "what we offer", "what's in it for you", "what we can offer", "why join us", "why join",
+               "application process", "how to apply", "support to succeed", "our commitment",
+               "diversity", "equal opportunities", "locations", "location", "opening and closing date",
+               "closing date", "salary", "perks", "rewards", "our values", "our culture",
+               "additional information", "next steps", "the process", "recruitment process",
+               "working at", "life at", "inclusion", "accessibility", "reasonable adjustments"]
+
+# Duties that substantially involve computing. Each line is one kind of work;
+# its "|"-separated phrases are synonyms and count once together.
+technical_duties:
+  - "software development|software engineering|develop software|developing software|build software|building software|software|developer|developers"
+  - "write code|writing code|code|coding|programming|scripting|scripts|debugging|code reviews"
+  - "develop applications|developing applications|build applications|building applications|web applications|mobile applications|apps"
+  - "api|apis|microservices|backend|back end|frontend|front end|full stack"
+  - "unit tests|test automation|automated testing|software testing"
+  - "data pipelines|etl|data engineering|databases|database|sql|data models|data modelling"
+  - "data science|statistical models|predictive models|quantitative models"
+  - "machine learning|deep learning|ml models|ai models|neural networks|computer vision|natural language processing|nlp|large language models|llm|llms"
+  - "algorithms|computational|mathematical modelling|simulation|simulations|operational research"
+  - "python|java|c++|c#|javascript|typescript|matlab|scala|rust|golang"
+  - "cyber security|cybersecurity|information security|penetration testing|vulnerabilities|vulnerability|threat detection|security operations|incident response"
+  - "cloud|aws|azure|gcp|kubernetes|docker|devops|ci/cd|it infrastructure|cloud infrastructure|servers|linux|networking|network engineering"
+  - "it support|service desk|technical support|systems administration"
+  - "embedded|firmware|fpga|hardware design|robotics|simulation software|electronics|circuits|pcb|control systems|control software|simulink"
+  - "data analytics|data analysis|power bi|tableau|dashboards"
+  - "technical architecture|solution architecture|system design"
+
+# Duties that are not computing: business, product, commercial, finance, legal,
+# people work, or another field's engineering and science.
+business_duties:
+  - "products and propositions|propositions|proposition|product management|product development"
+  - "partnerships|partners"
+  - "relationship management|relationship building|manage relationships|client relationships|clients|stakeholder management"
+  - "commercial|deals|transactions|pricing"
+  - "sales|selling|marketing|brand|marketing campaigns|advertising|market research|business development"
+  - "customer insight|customer journeys|customer experience"
+  - "financial analysis|financial modelling|accounting|valuation|mergers|acquisitions|investment|investments|portfolio|wealth|asset management|banking|credit|trading|underwriting|insurance"
+  - "audit|audits|auditing|compliance|regulatory|risk management|controls|tax"
+  - "legal|law firm|areas of law|lawyers|solicitors|contracts|litigation"
+  - "recruitment|human resources|hr"
+  - "procurement|supply chain|logistics|operations|events|retail|merchandising|buying"
+  - "communications|public relations|fundraising"
+  - "property|real estate|surveying"
+  - "advisory|strategy|strategic"
+  - "mechanical|aerodynamics|aerodynamic|propulsion|stress analysis|structural analysis|thermal|fluids|fluid dynamics|chemistry|laboratory|clinical|pharmacovigilance|microbiology|nuclear|civil engineering|construction|hydraulic|hydraulics|combustion|machining"
+
+# A title naming computing. It never includes a role on its own, but it stops
+# one being EXCLUDED for vague duties: that combination is REVIEW.
+title_technical: [software, developer, technology, technologist, tech, it, cyber, data, analytics,
+                  "machine learning", ml, ai, "artificial intelligence", cloud, devops, sre,
+                  "site reliability", network, networks, backend, frontend, "full stack", quant,
+                  quantitative, algorithmic, computing, computer, digital, electronics, electronic,
+                  embedded, firmware, robotics, automation, "information management", informatics]
+
+# Technology mentioned as a tool or a trait, not as the work. Removed before
+# duties are counted, so "using data and technology" proves nothing.
+incidental: ["using data and technology", "use data and technology", "using data", "use data",
+             "data and research", "data, digital technology", "digital technology", "digital technologies",
+             "technology and ai tools", "ai tools", "using technology", "use technology",
+             "passion for technology", "interest in technology", "interest in tech", "tech-driven",
+             "technology-driven", "technology driven", "data-driven", "data driven", "digital tools",
+             "digital platforms", "digital experiences", "microsoft office", "ms office", "excel",
+             "powerpoint", "digital and ai capability", "technology to", "tech savvy", "tech-savvy",
+             "commercial aircraft", "commercial airbus", "external contracts", "commercial and military",
+             "local law", "applicable law"]
+
+# Counted in kinds of work (lines above), in the duties sections only.
+# TECHNICAL: at least `technical_min` technical kinds and at least
+# `technical_margin` more technical kinds than other kinds - a trading role that
+# "explores statistical models" is mixed, not computing. NOT_TECHNICAL: at least `business_min` other
+# kinds and no more than `incidental_tech_max` technical ones; with one fewer,
+# only when the title also names a non-computing function or field (the
+# careers lists `non_tech_function_terms` / `other_field_terms`) - the title
+# breaks a tie, it never decides alone. Anything else is mixed: REVIEW.
+technical_min: 2
+technical_margin: 2
+business_min: 3
+incidental_tech_max: 1
+
+undergraduate:
+  # Current study, stated in so many words.
+  current_study: ["currently studying", "currently pursuing", "currently enrolled", "currently undertaking",
+                  "currently working towards", "currently completing", "currently in your",
+                  "currently in the", "currently at university", "current students", "current undergraduates",
+                  "current undergraduate", "current university students", "undergraduate students",
+                  "undergraduate student", "university students", "penultimate year", "penultimate-year",
+                  "final year students", "final year student", "final-year students", "first year students",
+                  "first-year students", "second year students", "second-year students",
+                  "returning to university", "return to university", "year in industry", "placement year",
+                  "sandwich year", "sandwich placement", "sandwich degree", "industrial placement year",
+                  "pursuing a bachelor", "pursuing bachelor", "pursuing bachelors", "pursuing bachelor's",
+                  "pursuing a degree", "pursuing an undergraduate", "enrolled in a",
+                  "enrolled on a", "studying for a", "studying towards", "working towards a",
+                  "working towards your", "undertaking a degree", "undertaking an undergraduate",
+                  "completing a degree", "completing your degree", "completing an undergraduate",
+                  "still at university", "during your degree", "as part of your degree", "as part of your studies",
+                  "as part of their studies", "as part of their degree", "aimed at students", "open to students",
+                  "students who are", "you're a student", "you are a student", "in your penultimate",
+                  "in your final year", "in your first year", "in your second year", "class of",
+                  "candidate for a", "candidates for a", "a candidate for", "on track to achieve",
+                  "on track for a", "on course for a", "expected to graduate", "expecting to graduate"]
+  # Programme types that exist only for current undergraduates (title only).
+  programme_titles: ["industrial placement", "placement year", "year in industry", "sandwich placement",
+                     "spring week", "spring insight", "undergraduate", "insight week",
+                     "summer placement", "student placement"]
+  # Only when the posting does not also ask for current students, and never
+  # in an "if you have already graduated..." clause.
+  already_graduated: ["completed a bachelor", "completed your bachelor", "completed a degree",
+                      "completed your degree", "completed an undergraduate", "must have graduated",
+                      "should have graduated", "have already graduated", "recent graduates only",
+                      "graduates only", "graduated within the last", "hold a bachelor", "hold a degree",
+                      "degree already obtained", "you have graduated", "new grad", "new graduate"]
+  # Postgraduate-only, said in so many words (a mention of Master's is not enough).
+  postgraduate: ["enrolled in a phd", "enrolled in an msc", "enrolled in a master", "enrolled in a postgraduate",
+                 "enrolled in an mba", "pursuing a phd", "pursuing a master", "pursuing an msc",
+                 "pursuing a postgraduate", "studying for a phd", "studying for a master", "phd students",
+                 "phd student", "phd candidates", "phd candidate", "master's students", "masters students",
+                 "msc students", "postgraduate students", "doctoral students", "doctoral candidates",
+                 "phd internship", "phd intern", "current phd", "currently a phd", "mba students"]
+  postgraduate_titles: [phd, "ph.d", masters, "master's", msc, mba, postgraduate, doctoral, postdoc]
+  # Integrated master's degrees: not assumed to be undergraduate degrees.
+  integrated_masters: [meng, mcomp, msci, mmath, "m.eng", "integrated master's", "integrated masters"]
+  bachelor_too: ["bachelor", "bachelors", "bachelor's", "undergraduate", "undergraduates", "bsc", "b.sc", "beng", "penultimate", "first year",
+                 "second year", "final year", "year in industry", "placement year", "ba/bsc", "bs/ms"]
+  # A title for someone who has graduated or has years of experience.
+  not_student_titles: ["graduate programme", "graduate program", "graduate scheme", "new grad",
+                       "new graduate", "senior", "staff", "principal", "lead", "manager", "director",
+                       "head of", "experienced", "associate director", "vice president"]
+  student_titles: ["intern", "internship", "placement", "insight", "spring week", "summer analyst",
+                   "summer associate", "undergraduate", "student", "co-op", "work experience"]
+
+degree:
+  # A sentence about degrees names one of these.
+  cues: ["degree", "degrees", "studying", "study", "discipline", "disciplines", "subject", "subjects",
+         "bsc", "b.sc", "beng", "meng", "ba", "major", "background in", "qualification", "course"]
+  any: ["any degree", "any discipline", "any subject", "all degree disciplines", "all disciplines",
+        "all degrees", "all subjects", "all academic backgrounds", "any academic background",
+        "no specific degree", "degree in any", "from any background", "regardless of degree",
+        "whatever your degree", "whatever you study", "whatever you're studying", "any field of study",
+        "all degree subjects", "any degree subject", "open to all degree"]
+  # Computer Science by name (joint honours naming it count: "Maths & Computer Science").
+  cs_names: ["computer science", "computing", "software engineering", "computer engineering", "comp sci",
+             "compsci", "cs"]
+  # Named without Computer Science, these are recorded as EQUIVALENCE_UNCLEAR:
+  # the employer's words are kept, equivalence is not assumed.
+  equivalence_unclear: ["artificial intelligence", "ai", "data science", "informatics", "information technology",
+                        "cyber security", "cybersecurity", "computer systems", "software development",
+                        "machine learning", "or related", "or a related", "related discipline", "related field",
+                        "related subject", "relevant discipline", "relevant degree", "or equivalent"]
+  # A broad field, not a subject: BROAD_FIELD. Phrased as a degree or subject,
+  # so "technical skills" or "science team" is not a degree requirement.
+  broad_field: ["stem", "stem subject", "stem degree", "stem-related", "stem related", "engineering degree",
+                "degree in engineering", "engineering discipline", "an engineering", "technical degree",
+                "technical subject", "technical discipline", "numerate degree", "numerate subject",
+                "numerate discipline", "science degree", "scientific degree", "quantitative degree",
+                "quantitative subject", "quantitative discipline", "analytical degree", "analytical subject"]
+  # Subjects that on their own exclude Computer Science when required.
+  other_subjects: ["mechanical", "aerospace", "aeronautical", "civil", "structural", "chemical", "materials",
+                   "manufacturing", "physics", "chemistry", "biology", "biomedical", "biochemistry",
+                   "law", "legal", "accounting", "accountancy", "finance", "economics", "business",
+                   "marketing", "psychology", "geography", "architecture", "surveying", "medicine",
+                   "pharmacy", "nursing", "mathematics", "maths", "statistics", "actuarial", "geology",
+                   "environmental", "nuclear", "naval", "marine", "electrical", "electronic", "electronics"]
+  # A degree list with any of these is open-ended, so it cannot exclude.
+  open_ended: ["related", "similar", "relevant", "equivalent", "other", "such as", "e.g", "for example",
+               "including", "technical degree", "numerate", "quantitative", "engineering degree",
+               "engineering discipline", "engineering disciplines"]
+  required: ["must", "required", "requirement", "requirements", "requires", "need to be", "needs to be", "you will be studying",
+             "you'll be studying", "should be studying", "essential", "you must be", "only open to",
+             "eligible", "you need"]
+  preferred: ["preferred", "preferable", "desirable", "ideally", "ideal", "nice to have", "advantageous",
+              "a plus", "beneficial", "would be an advantage"]

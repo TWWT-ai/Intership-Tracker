@@ -23,8 +23,8 @@ from openpyxl.worksheet.datavalidation import DataValidation
 
 from tracker import config, normalize, status_sync
 from tracker.models import (
-    USER_OWNED_STATUSES,
     ApplicationStatus,
+    ChangeType,
     Job,
     OpenStatus,
     Priority,
@@ -39,6 +39,7 @@ SHEET_RUNS = "Runs"
 SHEET_GUIDE = "Guide"
 SHEET_LISTS = "Lists"
 SHEET_STATUS_REVIEW = "Status Review"
+SHEET_ASSESSMENT = "Assessment"
 
 #: Every column the sheet can show, as (label, attr). Which ones are actually
 #: written, and in what order, is the user's choice in config/workbook.yaml.
@@ -223,6 +224,23 @@ def write(
     for job in jobs:
         job.status_evidence = labels.get(job.id, "")
 
+    # Which rows the Internships sheet shows (tracker/role_filter.py). Until
+    # the assessment is approved: every row except one whose deadline has
+    # passed. After: only firm, quoted evidence, an employer-confirmed passed
+    # deadline or an explicitly closed posting hides a row. Either way a row
+    # the user has a status or a note on stays, and hidden rows stay in
+    # last_run.json.
+    from tracker import role_filter
+
+    today = dt.date.today()
+    filtering = role_filter.enabled()
+    shown, hidden = [], []
+    for job in jobs:
+        (shown if role_filter.keep_on_sheet(job, today, filtering) else hidden).append(job)
+    if filtering:
+        _write_assessment_sheet(wb, shown + hidden, today)
+    jobs = shown
+
     # Priority depends on application status, and the status only becomes known
     # once the user's edits are read back. Recompute so a submitted application
     # cannot keep sitting at the top of the sheet as HIGH.
@@ -341,18 +359,28 @@ def _apply_user_state(jobs: list[Job], existing: dict[str, dict]) -> None:
 
 
 def sort_jobs(jobs: list[Job]) -> list[Job]:
-    """HIGH first, then soonest deadline.
+    """New this scan first, then soonest deadline, then HIGH priority.
 
-    Dead roles - closed, or past their deadline - sink to the bottom so they
-    stay available as history without cluttering the top. Sorting only on
-    priority and deadline would do the opposite: an expired job has the
-    earliest deadline of all and would lead the sheet.
+    What the user checks each morning is what appeared overnight and what is
+    about to close, so those lead. Dead roles - closed, or past their
+    deadline - sink to the bottom so they stay available as history without
+    cluttering the top. Sorting only on deadline would do the opposite: an
+    expired job has the earliest deadline of all and would lead the sheet.
     """
     order = {Priority.HIGH: 0, Priority.MEDIUM: 1, Priority.LOW: 2}
     far_future = dt.date(2099, 12, 31)
     today = dt.date.today()
 
+    from tracker import role_filter
+
+    filtering = role_filter.enabled()
+
     def is_dead(job: Job) -> bool:
+        if filtering:
+            # Only employer evidence makes a role dead; a platform-listed date
+            # that has passed is a question, not an answer.
+            return bool(role_filter.closed_by_employer(job)) or bool(
+                job.deadline_confirmed and job.deadline_confirmed < today)
         return job.open_status is OpenStatus.CLOSED or bool(
             job.deadline and job.deadline < today
         )
@@ -361,8 +389,9 @@ def sort_jobs(jobs: list[Job]) -> list[Job]:
         jobs,
         key=lambda j: (
             is_dead(j),
-            order.get(j.priority, 3),
+            j.change_type is not ChangeType.NEW,
             j.deadline or far_future,
+            order.get(j.priority, 3),
             -(j.match_score or 0),
             j.company.casefold(),
         ),
@@ -737,6 +766,57 @@ def _write_status_review_sheet(wb: Workbook, items: list[dict]) -> None:
     ws.auto_filter.ref = f"A1:{get_column_letter(len(_REVIEW_COLUMNS))}{max(len(items) + 1, 2)}"
 
 
+_ASSESSMENT_COLUMNS = [
+    ("ID", 12), ("Company", 22), ("Job Title", 40), ("On Internships sheet?", 13), ("Sheet reason", 44),
+    ("Role relevance", 14), ("Role reason", 38), ("Role evidence (quoted)", 50),
+    ("Study level", 16), ("Study reason", 32), ("Study evidence (quoted)", 44),
+    ("Degree subject", 16), ("Degree reason", 32), ("Degree evidence (quoted)", 44),
+    ("Eligible for You", 12), ("Eligibility reason", 32),
+    ("Deadline", 12), ("Deadline status", 12), ("Employer-confirmed", 12), ("Provisional (kept apart)", 12),
+    ("Deadline reason", 32), ("Deadline candidates", 60),
+    ("Text source", 36), ("Last checked", 12), ("Check outcome", 18),
+]
+
+
+def _write_assessment_sheet(wb: Workbook, jobs: list[Job], today: dt.date) -> None:
+    """Every finding for every role, side by side - never merged into one
+    score. Role relevance, study level, degree subject, personal eligibility
+    and the deadline each carry their reason and the posting's own words; the
+    sheet decision says why a row is, or is not, on the Internships sheet.
+    Rewritten on every write, like the other pipeline-owned sheets."""
+    if SHEET_ASSESSMENT in wb.sheetnames:
+        del wb[SHEET_ASSESSMENT]
+    ws = wb.create_sheet(SHEET_ASSESSMENT)
+    ws.append([label for label, _ in _ASSESSMENT_COLUMNS])
+    for cell in ws[1]:
+        cell.fill, cell.font = _HEADER_FILL, _HEADER_FONT
+    date_cols = {i for i, (label, _) in enumerate(_ASSESSMENT_COLUMNS, start=1)
+                 if label in ("Deadline", "Employer-confirmed", "Provisional (kept apart)")}
+    safe = lambda v: normalize.excel_safe(str(v or ""))  # noqa: E731
+    for job in sorted(jobs, key=lambda j: (j.sheet_decision != "HIDE", j.company.casefold(), j.job_title)):
+        candidates = " || ".join(f"{c.get('date') or c.get('status')} [{c.get('source')}, {c.get('method')}"
+                                 f"{', employer page' if c.get('employer_page') else ''}] {c.get('quote', '')[:120]}"
+                                 for c in job.deadline_evidence)
+        ws.append([safe(job.id), safe(job.company), safe(job.job_title),
+                   "Yes" if job.sheet_decision != "HIDE" else "No", safe(job.sheet_reason),
+                   safe(job.role_relevance), safe(job.role_relevance_reason), safe(job.role_relevance_evidence),
+                   safe(job.study_level), safe(job.study_level_reason), safe(job.study_level_evidence),
+                   safe(job.degree_subject_fit), safe(job.degree_subject_reason), safe(job.degree_subject_evidence),
+                   safe(job.eligible_for_you), safe(job.eligibility_reason),
+                   job.deadline, safe(job.deadline_status), job.deadline_confirmed, job.deadline_provisional,
+                   safe(job.deadline_reason), safe(candidates)[:2000],
+                   safe(job.assessment_text_source), safe(job.last_checked[:10]), safe(job.check_outcome)])
+    for i, (_, width) in enumerate(_ASSESSMENT_COLUMNS, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = width
+    for row in ws.iter_rows(min_row=2):
+        for cell in row:
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+            if cell.column in date_cols:
+                cell.number_format = "yyyy-mm-dd"
+    ws.freeze_panes = "D2"
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(_ASSESSMENT_COLUMNS))}{max(len(jobs) + 1, 2)}"
+
+
 def _write_guide_sheet(wb: Workbook) -> None:
     if SHEET_GUIDE in wb.sheetnames:
         del wb[SHEET_GUIDE]
@@ -748,7 +828,9 @@ def _write_guide_sheet(wb: Workbook) -> None:
 
     rows = [
         ("", ""),
-        ("Where to look", "Sort is already done: HIGH priority and nearest deadline are at the top of Internships."),
+        ("Where to look", "Sort is already done: jobs new in the latest scan are at the top of Internships, "
+                          "then the nearest deadlines, closed roles at the bottom. Roles past their deadline are "
+                          "left off unless you set a status or note on them."),
         ("To apply", "Click 'Apply' in the Application URL column. It opens the real application page."),
         ("After applying", "Pick a stage in Application Status (Application Submitted, Online Assessment, "
                            "Video Interview, ...). Blank means not applied. The daily scan never overwrites it. "

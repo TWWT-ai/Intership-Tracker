@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__0e056a82-65e3-4d17-85ec-a84c7265919c__get_thread",
+      "PowerShell($env:PYTHONIOENCODING='ascii:replace'; & .venv\\\\Scripts\\\\python.exe scripts\\\\statuses_then_format.py; \"EXIT=$LASTEXITCODE\")",
+      "mcp__0e056a82-65e3-4d17-85ec-a84c7265919c__search_threads",
+      "PowerShell($env:PYTHONIOENCODING='ascii:replace'; .venv\\\\Scripts\\\\python.exe scripts\\\\statuses_then_format.py; \"EXIT=$LASTEXITCODE\")",
+      "PowerShell($env:PYTHONIOENCODING='ascii:replace'; .venv\\\\Scripts\\\\python.exe scripts\\\\calendar_sync.py plan; \"EXIT=$LASTEXITCODE\"; Get-Content data\\\\state\\\\calendar_plan.json -Raw)"
+    ]
+  }
+}

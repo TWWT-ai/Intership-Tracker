@@ -1,4 +1,4 @@
-"""One row per technical programme, company-level cells merged. Formatting + filtering only.
+"""One row per technical programme, in the daily scan's order. Formatting + filtering only.
 
 Source: the last one-row-per-programme workbook (the backup taken before the
 company consolidation). Any Application Status or Note the user has since typed
@@ -6,9 +6,10 @@ into the consolidated workbook is carried back by programme ID.
 
 Non-technical programmes are removed by their Job Title (Skills as a tie-break).
 A title naming anything technical is kept even inside a finance division;
-unclear titles are kept and listed for review. Company is merged across each
-company's rows; Match Score and Location only where every row holds the same
-value. The draft is re-read and verified before the workbook is replaced.
+unclear titles are kept and listed for review. Rows keep the order `excel.write()`
+gave them (new this scan first, then nearest deadline) and no cell is merged:
+Excel refuses to sort or filter a range holding merged cells of different sizes.
+The draft is re-read and verified before the workbook is replaced.
 
     pipenv run python data/checkpoint/technical_programmes.py --check    # verify, write nothing
     pipenv run python data/checkpoint/technical_programmes.py            # replace the workbook
@@ -32,7 +33,13 @@ ROOT = Path(r"D:\School\Personal\Intership tracker")
 sys.path.insert(0, str(ROOT))
 os.chdir(ROOT)
 
-from tracker import normalize  # noqa: E402
+from tracker import normalize, role_filter  # noqa: E402
+
+#: Once the user approved the assessment (config/relevance.yaml), rows are
+#: judged by their posting in excel.write() and this pass removes nothing by
+#: title: it checks that no row the Assessment sheet hides - without the
+#: user's status or note - reached the sheet.
+FILTERING = role_filter.enabled()
 
 CURRENT = ROOT / "data" / "internships.xlsx"
 SOURCE = ROOT / "data" / "checkpoint" / "backups" / "internships-before-company-consolidation.xlsx"
@@ -193,8 +200,18 @@ print(f"user edits carried from the current workbook: {len(carried)} {carried[:5
 
 # ---------------------------------------------------------------- filter
 removed, review = [], []
+outcomes = {}
+if FILTERING and "Assessment" in src_wb.sheetnames:
+    rf = src_wb["Assessment"]
+    rf_col = {c.value: i for i, c in enumerate(rf[1])}
+    for row in rf.iter_rows(min_row=2, values_only=True):
+        outcomes[text(row[rf_col["ID"]])] = "HIDE" if text(row[rf_col["On Internships sheet?"]]) == "No" else "SHOW"
 for prog in programmes:
-    verdict, why = classify(text(prog["values"].get("Job Title")), text(prog["values"].get("Skills")))
+    if FILTERING:
+        prog["outcome"] = outcomes.get(prog["id"], "SHOW")
+        verdict, why = "keep", f"assessment: {prog['outcome']}"
+    else:
+        verdict, why = classify(text(prog["values"].get("Job Title")), text(prog["values"].get("Skills")))
     prog["verdict"], prog["why"] = verdict, why
     if verdict == "remove":
         removed.append(prog)
@@ -210,7 +227,7 @@ for p in removed_with_user_state:
     review.append(p)
 kept = [p for p in programmes if p["verdict"] != "remove"]
 
-# ---------------------------------------------------------------- group consecutively by company
+# ---------------------------------------------------------------- one display name per company
 same_key = {company_key(k): company_key(v) for k, v in SAME_COMPANY.items()}
 groups: "OrderedDict[str, list[dict]]" = OrderedDict()
 for prog in kept:
@@ -237,49 +254,33 @@ for name, c in new_col.items():
     cell._style = copy(src.cell(1, old_col[name])._style)
     ws.column_dimensions[get_column_letter(c)].width = src.column_dimensions[get_column_letter(old_col[name])].width
 
-placement = []                      # (group key, display, first row, last row, progs)
-row = 2
-for key, progs in groups.items():
+for progs in groups.values():
     name = display_name(progs)
-    first = row
     for prog in progs:
-        for column, c in new_col.items():
-            source_cell = src.cell(prog["row"], old_col[column])
-            cell = ws.cell(row, c)
-            cell._style = copy(source_cell._style)
-            value = name if column == "Company" else prog["values"].get(column)
-            cell.value = value
-            if source_cell.hyperlink:
-                cell.hyperlink = copy(source_cell.hyperlink)
-                cell.hyperlink.ref = cell.coordinate
-            wrap_alignment = copy(cell.alignment)
-            cell.alignment = Alignment(horizontal=wrap_alignment.horizontal, vertical="center", wrap_text=True)
-        prog["new_row"] = row
-        row += 1
-    placement.append((key, name, first, row - 1, progs))
-last_row = row - 1
+        prog["company_shown"] = name
 
-merged_groups = 0
-merges = {"Company": 0, "Match Score": 0, "Location": 0}
-for key, name, first, last, progs in placement:
-    if last == first:
-        continue
-    merged_groups += 1
-    for column in COMPANY_LEVEL:
-        values = [text(p["values"].get(column)) for p in progs]
-        if column == "Company" or len(set(values)) == 1:
-            c = new_col[column]
-            ws.merge_cells(start_row=first, start_column=c, end_row=last, end_column=c)
-            top = ws.cell(first, c)
-            top.alignment = Alignment(horizontal=top.alignment.horizontal, vertical="center", wrap_text=True)
-            merges[column] += 1
+# Rows stay in the daily scan's order, one per programme, nothing merged.
+row = 2
+for prog in kept:
+    for column, c in new_col.items():
+        source_cell = src.cell(prog["row"], old_col[column])
+        cell = ws.cell(row, c)
+        cell._style = copy(source_cell._style)
+        value = prog["company_shown"] if column == "Company" else prog["values"].get(column)
+        cell.value = value
+        if source_cell.hyperlink:
+            cell.hyperlink = copy(source_cell.hyperlink)
+            cell.hyperlink.ref = cell.coordinate
+        wrap_alignment = copy(cell.alignment)
+        cell.alignment = Alignment(horizontal=wrap_alignment.horizontal, vertical="center", wrap_text=True)
+    prog["new_row"] = row
+    row += 1
+last_row = row - 1
 
 # Row heights sized to the wrapped text.
 for r in range(2, last_row + 1):
     lines = 1
     for column, c in new_col.items():
-        if column in COMPANY_LEVEL:
-            continue
         value = text(ws.cell(r, c).value)
         if value:
             width = ws.column_dimensions[get_column_letter(c)].width or 12
@@ -363,38 +364,32 @@ if set(ids_now) != kept_ids:
     problems.append(("ids", len(set(ids_now) ^ kept_ids)))
 if any(c > 1 for c in ids_now.values()):
     problems.append(("id twice", [i for i, c in ids_now.items() if c > 1][:5]))
-merged_ranges = [str(m) for m in v.merged_cells.ranges]
-programme_letters = {get_column_letter(c) for name, c in new_col.items() if name not in COMPANY_LEVEL}
-for m in merged_ranges:
-    if re.match(r"^([A-Z]+)", m).group(1) in programme_letters:
-        problems.append(("programme column merged", m))
-merged_lookup = {}
-for m in v.merged_cells.ranges:
-    for r in range(m.min_row, m.max_row + 1):
-        merged_lookup[(r, m.min_col)] = (m.min_row, m.max_row)
-for key, name, first, last, progs in placement:
-    for column in COMPANY_LEVEL:
-        c = new_col[column]
-        span = merged_lookup.get((first, c))
-        values = [text(p["values"].get(column)) for p in progs]
-        should = last > first and (column == "Company" or len(set(values)) == 1)
-        if should and span != (first, last):
-            problems.append(("missing merge", name, column))
-        if not should and span:
-            problems.append(("merged although different", name, column, values))
-    for prog in progs:
-        r = prog["new_row"]
-        for column, c in new_col.items():
-            cell = v.cell(r, c)
-            if column in COMPANY_LEVEL:
-                span = merged_lookup.get((r, c))
-                shown = text(v.cell(span[0], c).value) if span else text(cell.value)
-                expected = name if column == "Company" else text(prog["values"].get(column))
-                if shown != expected:
-                    problems.append((prog["id"], column, expected, shown))
-                continue
-            if text(cell.value) != text(prog["values"].get(column)):
-                problems.append((prog["id"], column, prog["values"].get(column), cell.value))
+if FILTERING:
+    if not outcomes:
+        problems.append(("assessment on, but the workbook has no Assessment sheet",))
+    leaked = [p["id"] for p in kept if p.get("outcome") == "HIDE"
+              and not (text(p["values"].get("Application Status")) or text(p["values"].get("Notes")))]
+    if leaked:
+        problems.append(("hidden rows without your status or note on the sheet", leaked[:5]))
+if v.merged_cells.ranges:
+    problems.append(("merged cells", [str(m) for m in list(v.merged_cells.ranges)[:5]]))
+order_now = [text(v.cell(r, new_col["ID"]).value) for r in range(2, last_row + 1)]
+if order_now != [p["id"] for p in kept]:
+    problems.append(("row order differs from the daily scan", order_now[:3]))
+for prog in kept:
+    r = prog["new_row"]
+    for column, c in new_col.items():
+        expected = prog["company_shown"] if column == "Company" else prog["values"].get(column)
+        if text(v.cell(r, c).value) != text(expected):
+            problems.append((prog["id"], column, expected, v.cell(r, c).value))
+# Filtering and sorting by date need every cell in a date column to be a date (or blank).
+for column in ("Date Posted", "Deadline", "Start Date", "Listed Deadline", "Date Found", "Last Updated"):
+    if column in new_col:
+        odd = [prog["id"] for prog in kept
+               if v.cell(prog["new_row"], new_col[column]).value is not None
+               and not isinstance(v.cell(prog["new_row"], new_col[column]).value, (dt.date, dt.datetime))]
+        if odd:
+            problems.append((column, "not a date", odd[:5]))
 leftover = [(text(v.cell(r, new_col["ID"]).value), text(v.cell(r, new_col["Job Title"]).value))
             for r in range(2, v.max_row + 1)
             if classify(text(v.cell(r, new_col["Job Title"]).value), text(v.cell(r, new_col["Skills"]).value))[0] == "remove"
@@ -427,8 +422,7 @@ with REVIEW_CSV.open("w", newline="", encoding="utf-8-sig") as fh:
                     text(p["values"].get("Eligible for You")), text(p["values"].get("Deadline"))[:10]])
 
 print(f"technical programme rows remaining: {len(kept)}")
-print(f"companies represented: {len(placement)} | company groups with merged cells: {merged_groups}")
-print(f"merged: Company {merges['Company']}, Match Score {merges['Match Score']}, Location {merges['Location']}")
+print(f"companies represented: {len(groups)} | merged cells: none")
 print(f"other sheets, rows removed for the same programmes: {other_sheet_rows}")
 print(f"removed that were Eligible=Yes for you: "
       f"{[(p['id'], text(p['values']['Company']), text(p['values']['Job Title'])[:50]) for p in removed if text(p['values'].get('Eligible for You')) == 'Yes']}")

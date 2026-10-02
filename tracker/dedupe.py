@@ -162,6 +162,10 @@ def merge(primary: Job, other: Job, preference: list[str]) -> Job:
         if not any(_same_ref(s, ref) for s in primary.sources):
             primary.sources.append(ref)
 
+    # The description travels with the listing it came from.
+    if not primary.description and other.description:
+        primary.description_source = other.description_source
+
     # Prefer a real value over an empty one, field by field. Neither listing is
     # authoritative, so the rule is simply "something beats nothing".
     for attr in (

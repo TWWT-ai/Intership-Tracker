@@ -22,6 +22,11 @@ PROFILE = DATA_DIR / "profile.json"
 ID_REGISTRY = STATE_DIR / "id_registry.json"
 # One review packet per tracker ID (tracker/prep.py). Gitignored: personal.
 APPLICATIONS_DIR = DATA_DIR / "applications"
+# The hackathon tracker (tracker/events.py): a separate workbook and state.
+EVENTS_WORKBOOK = DATA_DIR / "hackathons.xlsx"
+EVENTS_STORE = STATE_DIR / "events.json"
+EVENTS_LEADS = STATE_DIR / "event_leads.json"
+EVENTS_PLAN = STATE_DIR / "event_sweep_plan.json"
 
 
 @functools.cache

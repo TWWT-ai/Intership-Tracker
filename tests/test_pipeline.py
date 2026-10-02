@@ -225,14 +225,15 @@ class TestSeasonsAndStatus:
         fake_run({"trackr": FakeAdapter([GIC_2026, GIC_2027])})
         pipeline.run_daily(skip_verify=True)
         rows = _rows_by_title()
-        assert rows["GIC Internship Programme 2026"]["ID"] != rows["GIC Internship Programme 2027"]["ID"]
+        assert "GIC Internship Programme 2026" not in rows     # deadline passed: off the sheet
+        assert _saved_by_title()["GIC Internship Programme 2026"]["id"] != rows["GIC Internship Programme 2027"]["ID"]
 
         _set_status("GIC Internship Programme 2027", "Application Submitted")
         pipeline.run_daily(skip_verify=True)
 
         rows = _rows_by_title()
         assert rows["GIC Internship Programme 2027"]["Status"] == "Application Submitted"
-        assert rows["GIC Internship Programme 2026"]["Status"] is None     # not applied
+        assert _saved_by_title()["GIC Internship Programme 2026"]["status"] == "FOUND"     # not applied
 
     def test_a_pre_fix_merged_row_hands_its_status_to_the_open_round(self, fake_run):
         """Before the fix both rounds folded into one row showing the 2026
@@ -247,6 +248,7 @@ class TestSeasonsAndStatus:
         config.ID_REGISTRY.write_text(
             json.dumps({legacy.fingerprint(): "INT-000213", "_next": 214}), encoding="utf-8")
         pipeline._save_previous([legacy])
+        legacy.status = ApplicationStatus.APPLIED       # an applied row stays on the sheet past its deadline
         excel.write([legacy])
         # Typed in the old code, as the real pre-fix workbook holds it.
         _set_status("GIC Internship Programme 2026", "APPLIED")
@@ -255,11 +257,13 @@ class TestSeasonsAndStatus:
         pipeline.run_daily(skip_verify=True)
 
         rows = _rows_by_title()
-        new, old = rows["GIC Internship Programme 2027"], rows["GIC Internship Programme 2026"]
+        new = rows["GIC Internship Programme 2027"]
         assert (new["ID"], new["Status"], new["Open Status"]) == (
             "INT-000213", "Application Submitted", "UNKNOWN")
         assert new["Deadline"] is None                  # not the 2026 round's date
-        assert (old["ID"], old["Status"], old["Open Status"]) == ("INT-000214", None, "CLOSED")
+        assert "GIC Internship Programme 2026" not in rows     # deadline passed, never applied: off the sheet
+        old = _saved_by_title()["GIC Internship Programme 2026"]
+        assert (old["id"], old["status"], old["open_status"]) == ("INT-000214", "FOUND", "CLOSED")
 
     def test_a_listed_deadline_is_never_carried_onto_a_listing_without_one(self, fake_run):
         """A pre-fix row could hold a deadline merged in from another round."""
@@ -290,6 +294,12 @@ def _rows_by_title() -> dict[str, dict]:
         }
         for r in range(2, ws.max_row + 1)
     }
+
+
+def _saved_by_title() -> dict[str, dict]:
+    """The last run as saved, including rows the sheet leaves off."""
+    saved = json.loads((config.STATE_DIR / "last_run.json").read_text(encoding="utf-8"))
+    return {j["job_title"]: j for j in saved["jobs"]}
 
 
 def _set_status(title: str, status: str) -> None:

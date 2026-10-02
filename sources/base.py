@@ -95,6 +95,7 @@ def build_job(
         year_of_study=normalize.clean_text(year_of_study, limit=200),
         experience_requirements=normalize.clean_text(experience_requirements, limit=400),
         description=description,
+        description_source=source_url if description else "",
         skills=skills,
         programming_languages=languages,
         technologies=technologies,

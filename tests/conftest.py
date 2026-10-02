@@ -26,6 +26,10 @@ def isolated_data(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "PROFILE", data / "profile.json")
     monkeypatch.setattr(config, "ID_REGISTRY", state / "id_registry.json")
     monkeypatch.setattr(config, "APPLICATIONS_DIR", data / "applications")
+    monkeypatch.setattr(config, "EVENTS_WORKBOOK", data / "hackathons.xlsx")
+    monkeypatch.setattr(config, "EVENTS_STORE", state / "events.json")
+    monkeypatch.setattr(config, "EVENTS_LEADS", state / "event_leads.json")
+    monkeypatch.setattr(config, "EVENTS_PLAN", state / "event_sweep_plan.json")
     return data
 
 
@@ -121,3 +125,14 @@ def filled_profile() -> dict:
         "experience": [{"role": "ML Team Assistant", "technologies": ["Python"]}],
         "preferred_locations": ["London"],
     }
+
+
+def make_event(**kw) -> dict:
+    """A researched candidate as the event-researcher skill writes one."""
+    base = {"name": "HackSheffield 11", "organisation": "HackSheffield",
+            "official_url": "https://hacksheffield.co.uk/", "start_date": "2026-11-14",
+            "last_verified": "2026-09-30", "student_eligible": "Yes",
+            "undergrad_eligible": "Yes", "region": "England",
+            "evidence": "Teams of up to four build a project in 24 hours",
+            "discovery_method": "Society Search"}
+    return {**base, **kw}

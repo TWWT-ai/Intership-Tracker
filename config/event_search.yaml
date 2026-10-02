@@ -1,0 +1,104 @@
+# Discovery vocabulary for tracker/event_search.py. These are EXAMPLES of how
+# technical events are named and where they are listed. Inclusion is decided by
+# what participants do (skills/event-researcher/SKILL.md), never by these words.
+
+formats: [hackathon, buildathon, codeathon, datathon, "AI challenge", "coding challenge",
+  "coding competition", "programming competition", "algorithm challenge",
+  "machine learning competition", "data challenge", "data sprint", "data dive",
+  "build challenge", "innovation challenge", "innovation competition",
+  "engineering challenge", "engineering design challenge", "robotics competition",
+  "robotics challenge", "cyber competition", "capture the flag", "CTF",
+  "developer challenge", "prototype challenge", "design and build challenge",
+  "open source sprint", "project sprint", "tech competition",
+  "student technology competition", "build night", "game jam"]
+
+# "-athon" names vary endlessly (AIathon, Cyberathon, Quantathon...): searched as
+# a stem with these qualifiers instead of listing every variant.
+athon_qualifiers: [coding, AI, data, engineering, cyber, design]
+
+# The formats combined with each city slice (the full list would be too many queries).
+city_formats: [hackathon, "coding competition", "AI challenge", "robotics competition",
+  "CTF", "data challenge"]
+
+domains: ["software engineering", "computer science", AI, "machine learning",
+  "data science", "data engineering", cybersecurity, robotics, "embedded systems",
+  IoT, hardware, electronics, "computer vision", "web development",
+  "mobile development", cloud, "open source", algorithms, programming,
+  engineering, fintech, "climate tech", "sustainability technology",
+  "automotive technology", "aerospace technology"]
+
+society_types: ["Computer Science Society", CompSoc, "Computing Society", "AI Society",
+  "Machine Learning Society", "Robotics Society", "Cyber Security Society",
+  "Engineering Society", "Data Science Society", "Developer Society",
+  "Programming Society", "Hack Society", "Entrepreneurship Society",
+  "Innovation Society", "Technology Society"]
+
+universities: ["University of Manchester", "Imperial College London", UCL,
+  "King's College London", "Queen Mary University of London", "University of Cambridge",
+  "University of Oxford", "University of Edinburgh", "University of Glasgow",
+  "University of Strathclyde", "Heriot-Watt University", "University of St Andrews",
+  "University of Dundee", "University of Aberdeen", "University of Bristol",
+  "University of Bath", "University of Birmingham", "Aston University",
+  "University of Warwick", "Coventry University", "University of Leeds",
+  "University of Sheffield", "University of York", "Durham University",
+  "Newcastle University", "Northumbria University", "Lancaster University",
+  "University of Liverpool", "Manchester Metropolitan University",
+  "University of Nottingham", "Nottingham Trent University", "Loughborough University",
+  "University of Leicester", "University of Southampton", "University of Surrey",
+  "University of Reading", "University of Exeter", "University of Plymouth",
+  "University of Portsmouth", "University of Sussex", "University of Kent",
+  "Royal Holloway", "Brunel University London", "Cardiff University",
+  "Swansea University", "Bangor University", "Queen's University Belfast",
+  "Ulster University"]
+
+# Grouped by industry: technical events are searched at non-tech firms too.
+companies:
+  automotive: [Jaguar Land Rover, McLaren, Nissan UK, Toyota UK, BMW UK]
+  sport: [Nike, adidas, Mercedes-AMG Petronas F1, Williams Racing, Red Bull Racing]
+  retail: [Tesco, Sainsbury's, John Lewis, Ocado, ASOS, Marks and Spencer]
+  aerospace: [BAE Systems, Rolls-Royce, Airbus UK, Leonardo UK, Thales UK]
+  energy: [Octopus Energy, National Grid, BP, Shell, EDF UK]
+  telecoms: [BT, Vodafone, Virgin Media O2]
+  manufacturing: [Dyson, Siemens UK, Arm, Renishaw, JCB]
+  healthtech: [GSK, AstraZeneca, NHS England]
+  consumer_electronics: [Samsung UK, Sony UK]
+  gaming: [Rockstar Games, Sumo Digital, Frontier Developments, Ubisoft Reflections]
+  media: [BBC, Sky, ITV, Channel 4]
+  logistics: [Royal Mail, DHL UK, Amazon UK]
+  finance: [JPMorgan, Goldman Sachs, Bloomberg, Citadel, Jane Street, IMC, Optiver,
+            G-Research, Revolut, Monzo]
+  tech: [Google, Microsoft, Meta, Amazon Web Services, IBM, NVIDIA, Palantir, Cisco]
+
+organisations: ["Alan Turing Institute", "Royal Academy of Engineering", IET, BCS,
+  IMechE, NCSC, CyberFirst, "Digital Catapult", UKRI, "Raspberry Pi Foundation",
+  "Code First Girls", "Major League Hacking", "Google Developer Groups UK", PyData UK,
+  "Hack The Box", TryHackMe, Kaggle, DrivenData, "Engineers Without Borders UK",
+  "Institute of Physics", "Royal Aeronautical Society"]
+
+# A discovery aid, not a whitelist: an event anywhere in the UK is accepted.
+cities: [London, Manchester, Birmingham, Bristol, Edinburgh, Glasgow, Leeds, Liverpool,
+  Sheffield, Nottingham, Newcastle, Cambridge, Oxford, Southampton, Cardiff, Belfast,
+  Coventry, Leicester, Exeter, Reading]
+
+# Searched via web search (site:), not scraped. Pages opened only where robots allow.
+# hackathons.org.uk (Hackathons UK) lists most UK student hackathons, past and
+# upcoming; found in the first sweep (2026-09-30). createwith.com aggregates but
+# has disagreed with organiser pages on dates: discovery only.
+platforms: [hackathons.org.uk, mlh.io, devpost.com, lu.ma, eventbrite.co.uk,
+  ctftime.org, kaggle.com, hackathon.com, createwith.com]
+
+rotation_weeks: 4       # every long-list entry is searched at least once per 4 weeks
+per_round_cap: 40       # queries per generated round; tests fail if a list outgrows it
+
+# Keep adding extra rounds (--plan --offset 1, 2, ...) while a round's share of
+# NEW relevant events stays at or above this; stop after two rounds below it.
+saturation_new_ratio: 0.2
+
+# Missed-event feedback. One entry per event the sweep failed to find, e.g.
+#   - {event: "CodeFest UK", found: 2026-10-12, reason: naming pattern,
+#      change: "added 'codefest' to formats"}
+# Generalise the fix; never add a one-off event name as a keyword.
+miss_reasons: [naming pattern, athon variation, domain keyword, university, society,
+  company, organisation, location, platform only, poorly indexed,
+  recurring relationship]
+misses: []

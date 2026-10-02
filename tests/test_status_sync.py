@@ -441,7 +441,8 @@ def test_last_years_round_cannot_take_this_years_confirmation():
 
     sync()
 
-    assert cell(new.id) == "Application Submitted" and cell(old.id) is None
+    assert cell(new.id) == "Application Submitted"
+    assert old.id not in status_sync.load_ledger()["rows"]     # expired: off the sheet, and untouched
 
 
 def test_the_listing_you_marked_is_the_application():

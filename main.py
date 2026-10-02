@@ -16,7 +16,7 @@ import json
 import subprocess
 from collections import Counter
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import click
@@ -192,6 +192,9 @@ def match_cmd() -> None:
         graduation.apply(job, f"{job.year_of_study}. {job.description}", profile)
         eligibility.reclassify(job)
         eligibility.assess(job, job.description, profile)
+    from tracker import role_filter
+    if role_filter.enabled():
+        role_filter.assess_all(jobs)
     pipeline._score_all(jobs, profile, filters, weights)
 
     excel.write(jobs)
@@ -492,6 +495,147 @@ def statuses(evidence_file: Path | None, dry_run: bool, unlock_id: str | None) -
     if result.skipped:
         sys.exit(3)
     sys.exit(0 if result.wrote else 2)
+
+
+@cli.command("events")
+@click.option("--plan", "plan", is_flag=True, help="Write this week's search plan.")
+@click.option("--offset", default=0, help="With --plan: the next rotation slice, for extra rounds.")
+@click.option("--due", is_flag=True, help="List rows to re-check, open leads and next editions to find.")
+@click.option("--ingest", "ingest_path", type=click.Path(exists=True, dir_okay=False, path_type=Path),
+              help="JSON list of researched events (skills/event-researcher).")
+@click.option("--dry-run", is_flag=True, help="With --ingest: count new vs known, save nothing.")
+def events_cmd(plan: bool, offset: int, due: bool, ingest_path: Path | None, dry_run: bool) -> None:
+    """Hackathon tracker: plan a sweep, merge its results, rebuild data/hackathons.xlsx.
+
+    With no options it only re-renders, so day counts and deadline colours
+    stay current between weekly sweeps."""
+    from tracker import event_search, events as ev, events_excel
+    today = date.today()
+    store, leads = ev.load_store(), ev.load_leads()
+    if plan:
+        rounds = event_search.sweep_plan(store, leads, today, offset)
+        config.EVENTS_PLAN.parent.mkdir(parents=True, exist_ok=True)
+        config.EVENTS_PLAN.write_text(json.dumps(rounds, indent=1), encoding="utf-8")
+        echo(f"plan: {sum(len(r['queries']) for r in rounds)} queries in {len(rounds)} rounds "
+             f"-> {config.EVENTS_PLAN}")
+        return
+    if due:
+        for e in ev.due_for_check(store, today):
+            echo(f"RE-CHECK  {e['id']}  {e['name']}  {e['official_url'] or e['source_url']}")
+        for lead in leads:
+            echo(f"LEAD      {lead['name']}  ({lead.get('organisation', '')}) since {lead['first_seen']}")
+        for e in ev.recurring_followups(store, today):
+            echo(f"NEXT      {ev.series_name(e['name'])}  (last: {ev.edition_date(e)})")
+        return
+    if ingest_path:
+        out = ev.ingest(json.loads(ingest_path.read_text(encoding="utf-8")), today, save=not dry_run)
+        if dry_run:
+            echo(f"new {out['added']}, known {out['updated']}, leads {out['leads']} (nothing saved)")
+            return
+        echo(f"added {out['added']}, updated {out['updated']}, kept as leads {out['leads']}")
+        if out["gave_up"]:
+            echo(f"leads given up (no page found in time): {', '.join(out['gave_up'])}")
+        for name in out["flagged"]:
+            echo(f"WARNING: instruction-like text in '{name}' - review it, not acted on")
+        store, leads = ev.load_store(), ev.load_leads()
+    if not store:
+        echo("no events yet - run a sweep first")
+        return
+    if not events_excel.write(store, today, len(leads)):
+        echo("skipped - hackathons.xlsx is open in Excel; close it and rerun")
+        sys.exit(3)
+
+
+@cli.command("assess")
+@click.option("--dry-run", "dry", is_flag=True, help="Assess every role and report; change nothing.")
+@click.option("--fetch", "fetch", type=int, default=0,
+              help="With --dry-run: also read up to N public posting pages into the report (no browser).")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Apply the approved assessment to the workbook (needs apply_to_workbook: true).")
+def assess_cmd(dry: bool, fetch: int, apply_: bool) -> None:
+    """Show what the posting-based assessment would do, without doing it.
+
+    Four separate findings per role - role relevance, employer degree
+    requirement, personal eligibility, deadline - each with evidence. Reads
+    the last scan, the per-source snapshots, the workbook and the calendar
+    ledger; makes no network request and changes none of them. The report goes
+    to data/checkpoint/assess-dry-run/.
+    """
+    from tracker import role_filter
+
+    if apply_:
+        sys.exit(_assess_apply())
+    if not dry:
+        echo("Use --dry-run to see the report, or --apply once you have approved it.")
+        sys.exit(2)
+    s = role_filter.dry_run(fetch=fetch)
+    f, sheet, dl, cov = s["findings"], s["sheet"], s["deadlines"], s["coverage"]
+    echo(f"Roles assessed: {s['rows_assessed']}")
+    for name, counts in f.items():
+        echo(f"  {name}: " + ", ".join(f"{k or 'none'} {v}" for k, v in sorted(counts.items(), key=lambda kv: -kv[1])))
+    echo(f"Internships sheet: {sheet['on_sheet_now']} rows now -> {sheet['on_sheet_after']} after "
+         f"({len(sheet['leaving'])} leave, {sheet['returning']} return)")
+    echo(f"Deadlines: {len(dl['recovered_from_posting_text'])} found in posting text, {len(dl['changed'])} changed, "
+         f"{len(dl['conflicts'])} in conflict, unresolved {dl['unresolved']}")
+    echo(f"Coverage: {cov['checked_on_a_page_at_least_once']} checked on a page; unchecked {cov['unchecked_by_reason']}")
+    echo(f"  {cov['rule']}")
+    echo(f"Calendar days that would change: {len(s['calendar_days_changed'])} (report only, nothing sent)")
+    if s["profile"]["note_for_your_review"]:
+        echo(f"For your review: {s['profile']['note_for_your_review']}")
+    if fetch:
+        echo(f"Pages read for this report: {s['fetched_this_dry_run']}")
+    echo("Report: data/checkpoint/assess-dry-run/ (assessment.csv, calendar-impact.csv, summary.json)")
+
+
+def _assess_apply() -> int:
+    """Back up, apply the approved assessment offline, reformat, and prove the
+    user's cells are untouched. Refuses unless the user switched it on after
+    approving a dry-run report."""
+    import shutil
+
+    from tracker import role_filter
+
+    if not role_filter.enabled():
+        echo("Refused: apply_to_workbook is false in config/relevance.yaml. It is set only after you approve "
+             "the dry-run report.")
+        return 2
+    report = config.DATA_DIR / "checkpoint" / "assess-dry-run" / "summary.json"
+    if not report.exists():
+        echo("Refused: no dry-run report. Run `main.py assess --dry-run` first.")
+        return 2
+    if (config.DATA_DIR / "~$internships.xlsx").exists():
+        echo("skipped - the workbook is open in Excel; close it and rerun")
+        return 3
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup = config.DATA_DIR / "checkpoint" / "backups" / f"assess-before-apply-{stamp}"
+    backup.mkdir(parents=True, exist_ok=True)
+    for path in (config.WORKBOOK, config.STATE_DIR / "last_run.json", config.ID_REGISTRY,
+                 config.STATE_DIR / "status_sync.json", config.STATE_DIR / "calendar_events.json"):
+        if path.exists():
+            shutil.copy2(path, backup / path.name)
+    before = excel.read_user_state()
+
+    jobs = _load_last_run()
+    gained = role_filter.merge_fetched(jobs, report.parent / "pages")
+    role_filter.assess_all(jobs)
+    echo(f"Employer pages from the dry run brought in: {gained} rows")
+    profile = config.load_profile()
+    pipeline._score_all(jobs, profile, config.load("search_filters"), config.load("matching_weights"))
+    excel.write(jobs)
+    pipeline._save_previous(jobs)
+    layout = subprocess.run([sys.executable, str(config.ROOT / "data" / "checkpoint" / "technical_programmes.py"),
+                             "--after-daily"], cwd=config.ROOT)
+    after = excel.read_user_state()
+    user_cells = (excel.STATUS_COLUMN, "Notes", "Status Evidence")
+    lost = [i for i, cells in before.items() if any(cells.get(c) for c in user_cells)
+            and [cells.get(c) for c in user_cells] != [after.get(i, {}).get(c) for c in user_cells]]
+    echo(f"Backup: {backup}")
+    if layout.returncode != 0 or lost:
+        echo(f"PROBLEM - layout pass exit {layout.returncode}; rows whose status/notes differ: {lost[:10]}. "
+             f"Restore from the backup above.")
+        return 1
+    echo(f"Applied. {len(after)} rows on the Internships sheet; every status, note and Status Evidence unchanged.")
+    return 0
 
 
 @cli.command()

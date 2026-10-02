@@ -153,8 +153,11 @@ scores, which costs you evenings on applications that were never a fit.
 
 ### Reading it
 
-Already sorted: HIGH priority and nearest deadline at the top, closed roles at
-the bottom. The columns that matter sit left of the fold:
+Already sorted: jobs new in the latest scan at the top, then the nearest
+deadlines, closed roles at the bottom. A role whose deadline has passed is left
+off the sheet (it stays in `data/state/last_run.json`) unless you set a status
+or a note on it; a role with no known deadline always stays. No cell is merged and every
+date column holds real dates, so Excel's own sort and date filters work. The columns that matter sit left of the fold:
 
 `Priority · Match Score · Company · Job Title · Deadline · Open Status ·
 Primary Source · Sources · Application URL · Status`
@@ -307,7 +310,25 @@ python main.py ingest --csv jobs.csv
 
 python main.py prep INT-000123            # review packet for one job (below)
 python main.py apply INT-000123 --cv SWE_MARSHELL
+
+python main.py events --plan              # hackathon tracker: this week's search plan
+python main.py events --due               # rows to re-check, open leads, next editions
+python main.py events --ingest data/state/event_candidates.json [--dry-run]
+python main.py events                     # re-render data/hackathons.xlsx only
 ```
+
+### Hackathon and build-event tracker
+
+A separate workbook, `data/hackathons.xlsx`, lists UK hackathons and hackathon-like
+technical events: datathons, coding, AI and robotics competitions, CTFs, build nights,
+and similar. It has four sheets: Dashboard, Events, My Events and Review Queue.
+
+- Claude finds the events in a weekly sweep, following `skills/event-researcher/SKILL.md`.
+  Events are judged by what participants do, not by whether the title says "hackathon".
+- `main.py events --ingest` validates the results, deduplicates them and rebuilds the workbook.
+- `My Status` and `My Notes` are yours and survive every rebuild.
+- A find with no page yet is kept as a lead (`data/state/event_leads.json`), never as a row.
+- The daily scheduled run re-renders the workbook so the day counts stay current.
 
 ### Preparing an application
 

@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
 
-from sources.fetch import SourceBlocked, SourceError
+from sources.fetch import RobotsDisallowed, SourceBlocked, SourceError
 from tracker import config, eligibility, graduation, normalize, programme
 from tracker.models import Job, OpenStatus, Priority
 
@@ -40,12 +40,15 @@ class VerificationStats:
         self.deadlines_found = 0
         self.deadlines_corrected = 0
         self.errors = 0
+        # Assessment mode: why each selected row was, or was not, checked.
+        self.outcomes: dict[str, int] = {}
 
     def as_dict(self) -> dict:
         return {
             "checked": self.checked, "open": self.opened, "closed": self.closed,
             "unknown": self.unknown, "deadlines_found": self.deadlines_found,
             "deadlines_corrected": self.deadlines_corrected, "errors": self.errors,
+            "outcomes": dict(self.outcomes),
         }
 
     def summary(self) -> str:
@@ -112,6 +115,10 @@ def verify_all(session, jobs: list[Job], settings: dict | None = None) -> Verifi
 
     if not settings.get("enabled", True):
         return stats
+
+    from tracker import role_filter
+    if role_filter.enabled():
+        return _verify_all_assessed(session, jobs, settings, stats)
 
     for job in select(jobs, settings):
         try:
@@ -308,15 +315,19 @@ def sweep_eligibility(session, jobs: list[Job], settings: dict, profile: dict, l
     only: a site that refuses one is left alone rather than driven through a
     browser hundreds of times. Returns a one-line summary.
     """
+    from tracker import relevance, role_filter
+
     budget = limit or int(settings.get("eligibility_max_pages", 600))
     skip_hosts = tuple(str(h).casefold() for h in settings.get("eligibility_skip_hosts") or [])
     today = date.today()
+    filtering = role_filter.enabled()
+    listings = relevance.Listings.load() if filtering else None
     candidates = [
         job for job in jobs
         if job.open_status is not OpenStatus.CLOSED
         and not (job.deadline and job.deadline < today)
-        and job.eligible_for_you in ("", eligibility.CHECK)
-        and "careers" not in job.source_names()
+        and ((job.eligible_for_you in ("", eligibility.CHECK) and "careers" not in job.source_names())
+             or (filtering and relevance.needs_text(job)))
         and _single_posting(job.application_url, skip_hosts)
     ]
     candidates.sort(key=lambda job: (job.deadline is None, job.deadline or today))
@@ -328,6 +339,12 @@ def sweep_eligibility(session, jobs: list[Job], settings: dict, profile: dict, l
         if not text:
             empty += 1
             continue
+        if filtering and relevance.needs_text(job) and relevance.own_page(job, job.application_url):
+            # The row's own employer posting, for its own place: the role
+            # filter may read it from now on.
+            job.description = normalize.clean_description(text)
+            job.description_source = relevance.PAGE + job.application_url
+            role_filter.assess_row(job, listings, today)
         programme.refine(job, text)
         graduation.apply(job, text, profile)
         eligibility.assess(job, text, profile)
@@ -338,3 +355,319 @@ def sweep_eligibility(session, jobs: list[Job], settings: dict, profile: dict, l
 
     return (f"{opened} employer pages read of {len(candidates)} rows not settled for you - "
             f"{stated} have a graduation year, {settled} now Yes/No, {empty} gave no readable text")
+
+
+# ---------------------------------------------------------------------------
+# Assessment-mode verification (config/relevance.yaml apply_to_workbook)
+# ---------------------------------------------------------------------------
+#
+# Reads the row's own public employer posting first. A page is judged by what
+# it contains, not by its URL: a posting at ".../apply" is read; a page whose
+# main content is a sign-in, upload or applicant-data form is an application
+# step and is not read further. One GET per page - no link is followed, no
+# button pressed, no field filled. A blocked site is skipped for the rest of
+# the run instead of stopping everything; known-challenging aggregator sites
+# are never retried in a browser. Every selected row records why it was, or
+# was not, checked.
+
+from dataclasses import dataclass as _dataclass
+from datetime import datetime as _datetime
+
+
+#: Less posting text than this is a script-built shell, not a read posting.
+_MIN_PAGE_TEXT = 300
+
+
+@_dataclass
+class PageRead:
+    kind: str            # posting | application_step | closed | blocked | robots | unreachable | no_text
+    text: str = ""
+    locale: str = ""
+    note: str = ""
+    valid_through: str = ""
+
+
+def _gate(soup: BeautifulSoup, settings: dict) -> str:
+    """What makes a page an application step, or "" for none."""
+    markers = settings.get("application_step_markers") or {}
+    if soup.select_one("input[type=password]"):
+        return "password field"
+    if soup.select_one("input[type=file]"):
+        return "file upload"
+    sign_in = [str(w).casefold() for w in markers.get("sign_in") or []]
+    fields = [str(w).casefold() for w in markers.get("applicant_fields") or []]
+    for form in soup.find_all("form"):
+        words = " ".join(form.get_text(" ", strip=True).split()).casefold()
+        labels = " ".join(filter(None, [words] + [" ".join(filter(None, (
+            i.get("name"), i.get("placeholder"), i.get("aria-label"), i.get("id")))) for i in form.find_all(
+                ["input", "textarea", "select"])])).casefold()
+        if any(w in words for w in sign_in) and form.find("input"):
+            return "sign-in form"
+        asked = {f for f in fields if f in labels}
+        submits = form.select("button, input[type=submit]")
+        if len(asked) >= 3 and submits:
+            return f"applicant data entry ({', '.join(sorted(asked)[:4])})"
+    return ""
+
+
+def read_page(session, url: str, settings: dict, allow_browser: bool = True) -> PageRead:
+    """One GET, then decide what the page is. Never interacts with it."""
+    if not (url or "").startswith("http"):
+        return PageRead("unreachable", note="no URL")
+    try:
+        response = session.http.get(url)
+    except RobotsDisallowed:
+        return PageRead("robots", note=f"robots.txt disallows {_host(url)}")
+    except SourceBlocked:
+        if not allow_browser:
+            return PageRead("blocked", note=f"{_host(url)} refused a plain request")
+        try:
+            response = session.browser.get(url)
+        except SourceBlocked:
+            return PageRead("blocked", note=f"{_host(url)} served an anti-bot check; skipped, not bypassed")
+        except SourceError as exc:
+            return PageRead("unreachable", note=f"could not reach {_host(url)}: {type(exc).__name__}")
+    except SourceError as exc:
+        return PageRead("unreachable", note=f"could not reach {_host(url)}: {type(exc).__name__}")
+    if response.status in (404, 410):
+        return PageRead("closed", note=f"{_host(url)} returned {response.status}")
+    if not response.ok:
+        return PageRead("unreachable", note=f"{_host(url)} returned {response.status}")
+
+    soup = BeautifulSoup(response.text, "lxml")
+    locale = (soup.html.get("lang") if soup.html else "") or ""
+    posting_ld = ""
+    valid_through = ""
+    for script in soup.find_all("script", type="application/ld+json"):
+        raw = script.string or ""
+        if "JobPosting" in raw:
+            posting_ld = raw
+            m = re.search(r'"validThrough"\s*:\s*"([^"]+)"', raw)
+            valid_through = m.group(1)[:10] if m else ""
+    gate = _gate(soup, settings)
+    text = _main_text(response.text)
+    enough = len(text) >= int((settings.get("application_step_markers") or {}).get("posting_text_chars", 800))
+    if gate and not (posting_ld or enough):
+        return PageRead("application_step", locale=locale, note=f"stopped at application step: {gate}")
+    if len(text) < _MIN_PAGE_TEXT and not posting_ld:
+        return PageRead("no_text", locale=locale,
+                        note=f"{_host(url)}: no readable posting text without a browser (the page is built by script)")
+    return PageRead("posting", text=text, locale=locale, valid_through=valid_through,
+                    note=f"application form also present ({gate}); only posting text read" if gate else "")
+
+
+_WORKDAY = re.compile(r"https://([a-z0-9-]+)\.(wd\d+)\.myworkdayjobs\.com/(?:[a-zA-Z]{2}[-_][a-zA-Z]{2}/)?"
+                      r"([^/?#]+)(/job/[^?#]+?)(?:/apply[^?#]*)?/?(?:[?#].*)?$", re.I)
+_GREENHOUSE = re.compile(r"https://(?:job-boards|boards)\.greenhouse\.io/([^/?#]+)/jobs/(\d{5,})", re.I)
+_LEVER = re.compile(r"https://jobs\.(eu\.)?lever\.co/([^/?#]+)/([0-9a-f-]{36})", re.I)
+_ASHBY = re.compile(r"https://jobs\.ashbyhq\.com/([^/?#]+)/([0-9a-f-]{36})", re.I)
+
+
+def ats_posting(session, url: str) -> PageRead | None:
+    """The posting through its own platform's public job-data feed - the data
+    the page itself loads, with the same robots.txt check as any request.
+    None when the URL is not a posting on a platform with such a feed."""
+    from sources import careers
+
+    def fetch(api: str):
+        try:
+            response = session.http.get(api, expect_json=True)
+        except RobotsDisallowed:
+            return PageRead("robots", note=f"robots.txt disallows {_host(api)}")
+        except SourceBlocked:
+            return PageRead("blocked", note=f"{_host(api)} refused the request; skipped, not bypassed")
+        except SourceError as exc:
+            return PageRead("unreachable", note=f"could not reach {_host(api)}: {type(exc).__name__}")
+        if response.status in (404, 410):
+            return PageRead("closed", note=f"{_host(api)} returned {response.status} for this posting")
+        if not response.ok:
+            return PageRead("unreachable", note=f"{_host(api)} returned {response.status}")
+        try:
+            return __import__("json").loads(response.text)
+        except ValueError:
+            return PageRead("unreachable", note=f"{_host(api)} returned unreadable data")
+
+    def done(text: str, source: str, valid_through: str = "", note: str = "") -> PageRead:
+        text = normalize.clean_description(text)
+        if len(text) < _MIN_PAGE_TEXT:
+            return PageRead("no_text", note=f"{source}: the posting has no description text")
+        return PageRead("posting", text=text, valid_through=valid_through, note=note or f"read via {source}")
+
+    if m := _WORKDAY.match(url or ""):
+        tenant, wd, site, path = m.groups()
+        data = fetch(f"https://{tenant}.{wd}.myworkdayjobs.com/wday/cxs/{tenant}/{site}{path}")
+        if isinstance(data, PageRead):
+            return data
+        info = (data or {}).get("jobPostingInfo") or {}
+        note = "read via the Workday job feed" + ("" if info.get("canApply", True) else "; Workday reports it cannot be applied to")
+        return done(" ".join(filter(None, [info.get("title"), info.get("location"),
+                                           careers._text(info.get("jobDescription") or "")])), "Workday", note=note)
+    if m := _GREENHOUSE.match(url or ""):
+        token, job_id = m.groups()
+        data = fetch(f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs/{job_id}?content=true")
+        if isinstance(data, PageRead):
+            return data
+        import html as _html
+        return done(" ".join(filter(None, [(data or {}).get("title"), ((data or {}).get("location") or {}).get("name"),
+                                           careers._text(_html.unescape((data or {}).get("content") or ""))])),
+                    "Greenhouse")
+    if m := _LEVER.match(url or ""):
+        eu, token, job_id = m.groups()
+        data = fetch(f"https://api.{'eu.' if eu else ''}lever.co/v0/postings/{token}/{job_id}?mode=json")
+        if isinstance(data, PageRead):
+            return data
+        j = data or {}
+        return done(" ".join(filter(None, [j.get("text"), j.get("descriptionPlain"), *(
+            f"{i.get('text') or ''}: {careers._text(i.get('content') or '')}" for i in j.get("lists") or []),
+            j.get("additionalPlain")])), "Lever")
+    if m := _ASHBY.match(url or ""):
+        token, job_id = m.groups()
+        data = fetch(f"https://api.ashbyhq.com/posting-api/job-board/{token}?includeCompensation=false")
+        if isinstance(data, PageRead):
+            return data
+        job = next((j for j in (data or {}).get("jobs", []) if j.get("id") == job_id), None)
+        if job is None:
+            return PageRead("closed", note="the posting is no longer on its Ashby job board")
+        return done(" ".join(filter(None, [job.get("title"), job.get("location"), job.get("descriptionPlain")])),
+                    "Ashby")
+    return None
+
+
+def select_assessed(jobs: list[Job], settings: dict, today: date | None = None) -> tuple[list[Job], list[Job]]:
+    """(to check this run, over budget) - the budget spent where a missing
+    employer confirmation costs most. Rows without an own employer posting
+    are not queued; they are reported instead."""
+    from tracker import role_filter
+
+    today = today or date.today()
+    budget = settings.get("budget", {})
+    limit = int(config.env_override("MAX_VERIFICATIONS") or budget.get("max_verifications", 120))
+    revalidate = int(budget.get("revalidate_after_days", 3))
+    far = date(2099, 12, 31)
+
+    def tier(job: Job) -> int | None:
+        confirmed = job.deadline_status == "CONFIRMED"
+        if job.deadline and job.deadline < today and not confirmed:
+            return 0
+        if job.deadline and job.deadline >= today and not confirmed:
+            return 1
+        if job.deadline_status in ("CONFLICT", "AMBIGUOUS"):
+            return 2
+        if not job.last_checked and job.last_verified is None:
+            return 3
+        last = job.last_verified or (_datetime.fromisoformat(job.last_checked) if job.last_checked else None)
+        if last is None or (_datetime.now() - last) > timedelta(days=revalidate):
+            return 4
+        return None
+
+    queue = []
+    for job in jobs:
+        url = job.application_url
+        if not (_single_posting(url) and not role_filter.aggregator(url)):
+            job.check_outcome = "no_employer_url"
+            continue
+        if role_filter.touched(job) and job.open_status is OpenStatus.CLOSED:
+            continue
+        rank = tier(job)
+        if rank is None:
+            continue
+        passed = (today - job.deadline).days if job.deadline and job.deadline < today else 0
+        queue.append(((rank, passed if rank == 0 else 0, job.deadline or far,
+                       job.change_type != "NEW", job.last_checked or ""), job))
+    queue.sort(key=lambda item: item[0])
+    chosen = [job for _, job in queue[:limit]]
+    later = [job for _, job in queue[limit:]]
+    for job in later:
+        job.check_outcome = "over_budget"
+    return chosen, later
+
+
+def verify_assessed(session, job: Job, settings: dict, blocked: set[str], listings, today: date,
+                    browser: bool = True) -> str:
+    """Check one row on its own employer posting; returns the check outcome."""
+    from tracker import deadline_extract as dx
+    from tracker import relevance, role_filter
+
+    job.checks_attempted += 1
+    job.last_checked = _datetime.now().replace(microsecond=0).isoformat()
+    url = job.application_url
+    host = _host(url).casefold()
+    if host in blocked:
+        return "blocked"
+    page = ats_posting(session, url) or read_page(
+        session, url, settings, allow_browser=browser and not role_filter.aggregator(url))
+    job.verification_note = page.note[:300]
+    if page.kind in ("blocked", "robots", "unreachable", "application_step", "no_text"):
+        if page.kind == "blocked":
+            blocked.add(host)
+        return page.kind
+    if page.kind == "closed":
+        job.open_status = OpenStatus.CLOSED
+        job.closed_evidence = page.note
+        job.last_verified = _datetime.now().replace(microsecond=0)
+        return "checked"
+
+    status = _status_from_text(page.text, settings)
+    if status is OpenStatus.CLOSED:
+        marker = next((m for m in settings.get("closed_markers", []) if m in page.text.casefold()), "")
+        job.closed_evidence = f"employer page says \"{marker}\" ({_host(url)})"
+    job.open_status = status
+    # Fresh employer-page evidence replaces the last read of the same page.
+    own = relevance.own_page(job, url)
+    # Only the page's own declared language. A URL segment such as Workday's
+    # /en-US/ is the site's display language, not how the recruiter wrote the
+    # date - a UK posting shown under /en-US/ would read 03/10 as 10 March.
+    order = dx.order_from_locale(page.locale)
+    basis = f"page language {page.locale}" if order else ""
+    evidence = [c for c in job.deadline_evidence if not (c.get("method") == "employer page" and c.get("url") == url)]
+    found = dx.candidates(page.text, source="employer page", url=url, method="employer page", employer_page=own,
+                          order=order, order_basis=basis, places_pattern=relevance._uk_places())
+    if page.valid_through:
+        structured = dx.mentions(page.valid_through)
+        if structured and structured[0].value:
+            found.append(dx.Candidate(date=structured[0].value.isoformat(), status=dx.OK, source="employer page",
+                                      url=url, method="employer page", employer_page=own,
+                                      quote=f"validThrough {page.valid_through}", order="structured field"))
+    job.deadline_evidence = evidence + [c.as_dict() for c in found]
+    if own and relevance.needs_text(job):
+        job.description = normalize.clean_description(page.text)
+        job.description_source = relevance.PAGE + url
+    profile = config.load_profile()
+    programme.refine(job, page.text)
+    graduation.apply(job, page.text, profile)
+    eligibility.assess(job, page.text, profile)
+    job.last_verified = _datetime.now().replace(microsecond=0)
+    role_filter.assess_row(job, listings, today)
+    return "checked"
+
+
+def _verify_all_assessed(session, jobs: list[Job], settings: dict, stats: VerificationStats) -> VerificationStats:
+    from tracker import relevance
+
+    today = date.today()
+    listings = relevance.Listings.load()
+    chosen, later = select_assessed(jobs, settings, today)
+    blocked: set[str] = set()
+    outcomes = {}
+    for job in chosen:
+        try:
+            outcome = verify_assessed(session, job, settings, blocked, listings, today)
+        except Exception as exc:  # one bad page never stops the run
+            log.warning("Verification failed for %s (%s): %s", job.id, job.company, exc)
+            outcome = "unreachable"
+            stats.errors += 1
+        job.check_outcome = outcome
+        outcomes[outcome] = outcomes.get(outcome, 0) + 1
+        if outcome == "checked":
+            stats.checked += 1
+            if job.open_status is OpenStatus.OPEN:
+                stats.opened += 1
+            elif job.open_status is OpenStatus.CLOSED:
+                stats.closed += 1
+            else:
+                stats.unknown += 1
+            if job.deadline_status == "CONFIRMED":
+                stats.deadlines_found += 1
+    outcomes["over_budget"] = len(later)
+    stats.outcomes = outcomes
+    return stats
