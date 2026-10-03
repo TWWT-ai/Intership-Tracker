@@ -27,9 +27,10 @@ budget:
 # Trackr rows whose url field points straight at Greenhouse/Workday/etc.
 follow_application_url: true
 
-# An HTTP 404 or 410 on the application URL is treated as strong evidence the
-# role has closed. Other error codes are inconclusive and yield UNKNOWN.
-treat_404_as_closed: true
+# An HTTP 404 or 410 on the application URL means the posting is unavailable,
+# not that hiring has closed: UNKNOWN, with the response in the note (the
+# assessment reads it as UNAVAILABLE). Other error codes are UNKNOWN too.
+treat_404_as_closed: false
 
 # Case-insensitive substrings. Matching any of these marks the job CLOSED.
 closed_markers:
@@ -120,7 +121,10 @@ not_deadline_words: ["posted", "published", "updated", "start", "starts", "start
                      "commence", "commences", "commencing", "event", "held on", "takes place", "interview",
                      "interviews", "assessment centre", "assessment center", "open on", "opens on",
                      "opening on", "will open", "opened", "meet deadlines", "meeting deadlines", "runs from",
-                     "from", "until graduation", "graduating", "graduate in", "date of birth"]
+                     "from", "until graduation", "graduating", "graduate in", "date of birth",
+                     "programme dates", "programme date", "programme runs", "internship dates",
+                     "placement dates", "scheme dates", "dates", "end date", "ends", "ending", "finishes",
+                     "duration", "runs", "running from", "returning"]
 # Rolling recruitment: noted on the row, never turned into a date.
 rolling_phrases: ["rolling basis", "on a rolling", "may close early", "close early", "as soon as possible",
                   "until filled", "until the position is filled"]
@@ -146,6 +150,12 @@ locale_date_order:
 # A platform is added here only after its convention has been checked and the
 # evidence recorded (the dry-run report lists what to check). Empty on purpose.
 platform_date_order: {}
+
+# Platforms whose deadline field is the listing's schema.org validThrough
+# (sources/jobboards.py, sources/brightnetwork.py): when the listing expires,
+# not a deadline the employer stated. A passed date from one of these alone is
+# REVIEW, never a reliable expiry, and keeps the row in the checking queue.
+listing_expiry_fields: [higherin, targetjobs, brightnetwork]
 
 # A fetched page is an application step - never read further - when its main
 # content is a gate rather than a posting.

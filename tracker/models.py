@@ -232,8 +232,19 @@ class Job:
     deadline_confirmed: date | None = None
     deadline_provisional: date | None = None
     deadline_evidence: list[dict] = field(default_factory=list)
-    # Explicit closure seen on the employer's own posting (closed marker, 404/410).
+    # Explicit closure wording on the employer's own posting. A 404/410 or a
+    # passed deadline is never closure (see hiring_status).
     closed_evidence: str = ""
+    # Hiring status, kept apart from deadline expiry: EMPLOYER_OPEN |
+    # EMPLOYER_CLOSED (the employer's own posting says so) | LISTING_OPEN |
+    # LISTING_CLOSED (an aggregator or unrecorded source claims it) | UNKNOWN |
+    # UNAVAILABLE (the posting URL answers 404/410).
+    hiring_status: str = ""
+    hiring_evidence: str = ""
+    checked_url: str = ""             # where the last check looked
+    # What the Internships sheet shows beside Deadline: "EXPIRED (...)" for a
+    # passed date - never a hiring status - else the deadline status.
+    deadline_marker: str = ""
     # Whether the row stays on the Internships sheet, and why.
     sheet_decision: str = ""          # SHOW | HIDE
     sheet_reason: str = ""

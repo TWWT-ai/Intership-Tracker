@@ -550,9 +550,11 @@ def events_cmd(plan: bool, offset: int, due: bool, ingest_path: Path | None, dry
 @click.option("--dry-run", "dry", is_flag=True, help="Assess every role and report; change nothing.")
 @click.option("--fetch", "fetch", type=int, default=0,
               help="With --dry-run: also read up to N public posting pages into the report (no browser).")
+@click.option("--audit", "audit", type=click.Path(exists=True, dir_okay=False, path_type=Path), default=None,
+              help="With --dry-run: include a link audit's results (role-link-audit.csv) as evidence.")
 @click.option("--apply", "apply_", is_flag=True,
               help="Apply the approved assessment to the workbook (needs apply_to_workbook: true).")
-def assess_cmd(dry: bool, fetch: int, apply_: bool) -> None:
+def assess_cmd(dry: bool, fetch: int, audit: Path | None, apply_: bool) -> None:
     """Show what the posting-based assessment would do, without doing it.
 
     Four separate findings per role - role relevance, employer degree
@@ -568,7 +570,7 @@ def assess_cmd(dry: bool, fetch: int, apply_: bool) -> None:
     if not dry:
         echo("Use --dry-run to see the report, or --apply once you have approved it.")
         sys.exit(2)
-    s = role_filter.dry_run(fetch=fetch)
+    s = role_filter.dry_run(fetch=fetch, audit=audit)
     f, sheet, dl, cov = s["findings"], s["sheet"], s["deadlines"], s["coverage"]
     echo(f"Roles assessed: {s['rows_assessed']}")
     for name, counts in f.items():
@@ -584,6 +586,8 @@ def assess_cmd(dry: bool, fetch: int, apply_: bool) -> None:
         echo(f"For your review: {s['profile']['note_for_your_review']}")
     if fetch:
         echo(f"Pages read for this report: {s['fetched_this_dry_run']}")
+    if s["link_audit"]:
+        echo(f"Link audit included: {s['link_audit']}")
     echo("Report: data/checkpoint/assess-dry-run/ (assessment.csv, calendar-impact.csv, summary.json)")
 
 
@@ -617,6 +621,9 @@ def _assess_apply() -> int:
 
     jobs = _load_last_run()
     gained = role_filter.merge_fetched(jobs, report.parent / "pages")
+    audit = (json.loads(report.read_text(encoding="utf-8")).get("link_audit") or {}).get("path")
+    if audit and Path(audit).exists():
+        role_filter.merge_audit(jobs, Path(audit), role_filter.audit_date(Path(audit)))
     role_filter.assess_all(jobs)
     echo(f"Employer pages from the dry run brought in: {gained} rows")
     profile = config.load_profile()

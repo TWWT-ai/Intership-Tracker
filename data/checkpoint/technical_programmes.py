@@ -390,10 +390,14 @@ for column in ("Date Posted", "Deadline", "Start Date", "Listed Deadline", "Date
                and not isinstance(v.cell(prog["new_row"], new_col[column]).value, (dt.date, dt.datetime))]
         if odd:
             problems.append((column, "not a date", odd[:5]))
-leftover = [(text(v.cell(r, new_col["ID"]).value), text(v.cell(r, new_col["Job Title"]).value))
-            for r in range(2, v.max_row + 1)
-            if classify(text(v.cell(r, new_col["Job Title"]).value), text(v.cell(r, new_col["Skills"]).value))[0] == "remove"
-            and text(v.cell(r, new_col["ID"]).value) not in {p["id"] for p in review}]
+# By title only while the title filter decides. Once the assessment is on, a
+# title never removes a row, and the check that matters is "leaked" below: no
+# row the Assessment sheet hides reached the sheet.
+leftover = [] if FILTERING else [
+    (text(v.cell(r, new_col["ID"]).value), text(v.cell(r, new_col["Job Title"]).value))
+    for r in range(2, v.max_row + 1)
+    if classify(text(v.cell(r, new_col["Job Title"]).value), text(v.cell(r, new_col["Skills"]).value))[0] == "remove"
+    and text(v.cell(r, new_col["ID"]).value) not in {p["id"] for p in review}]
 if leftover:
     problems.append(("non-technical still present", leftover[:5]))
 if v.auto_filter.ref != f"A1:{last_letter}{last_row}":

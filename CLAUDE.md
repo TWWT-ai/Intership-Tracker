@@ -166,7 +166,7 @@ nothing. Ask the user to close Excel. Never delete the lock file.
 
 ## Testing
 
-624 tests, all offline against fixtures in `tests/fixtures/`. **No test may make
+672 tests, all offline against fixtures in `tests/fixtures/`. **No test may make
 a network request.**
 
 These four exist because they encode promises to the user. Do not weaken them:
@@ -337,19 +337,67 @@ touch the real workbook.
   listing for the same place (merges can carry another city's posting: Lloyds
   `INT-001157` holds Leeds' Workday posting). AI / Data Science / integrated
   master's are not assumed equivalent to a CS undergraduate degree.
-  A row leaves the sheet only on `STRONG_AGAINST` evidence, an
-  employer-CONFIRMED passed deadline, or an explicitly closed employer posting;
-  a passed LISTED date keeps it visible as REVIEW and first in the
-  verification queue. The Deadline column shows the employer's date; an
-  earlier conflicting one is `deadline_provisional`, kept apart (and its own
-  "(provisional)" calendar line). Numeric dates are read in the order the
-  SOURCE states (`<html lang>`, URL locale, a platform in
-  `platform_date_order` only once checked) - otherwise AMBIGUOUS. Pages are
+  A row leaves the sheet only on `STRONG_AGAINST` evidence from the posting's
+  words - a title never decides, not even a tie (two kinds of other work plus
+  a title word is REVIEW), nor does a heading: a subject list under
+  "Requirements" excludes only if the clause itself says only/must (Airbus
+  INT-001168). A finding a reading in context showed the posting
+  does not clearly support is listed by Tracker ID in `review_not_exclude`
+  (config/relevance.yaml): kept as evidence, row stays as REVIEW; the list can
+  only keep a row visible. Explicit closure wording on the employer's own
+  posting keeps the row too, sorted to the bottom with Open Status CLOSED. Hiring status and deadline expiry are separate:
+  `hiring_status` is EMPLOYER_OPEN/EMPLOYER_CLOSED (employer page only),
+  LISTING_OPEN/LISTING_CLOSED (aggregator or unrecorded source), UNKNOWN, or
+  UNAVAILABLE (404/410 - never "closed"). The normal nightly path keeps them
+  apart too, flag on or off: `verify.verify_job` never turns a passed deadline
+  or a 404 into CLOSED (`treat_404_as_closed: false`), records the employer's
+  closure words, treats an aggregator's "closed" as a listing claim, and
+  `_restore_state` carries a CLOSED only with recorded employer words. Open
+  Status says CLOSED only for
+  EMPLOYER_CLOSED, and an old CLOSED with no recorded wording (the old checker
+  closed every passed deadline; its note is lost overnight) is UNKNOWN. The
+  hiring finding is carried between runs. A passed deadline never hides a row:
+  it stays, sorted to the bottom, with an EXPIRED marker (gated "Deadline
+  Status" / "Hiring Status" columns). The Deadline column shows the employer's
+  date; an earlier conflicting one is `deadline_provisional`, kept apart (its
+  own "(provisional)" calendar line), and a conflict names every source.
+  Numeric dates are read in the order the SOURCE states (the page's
+  `<html lang>`, or a platform in `platform_date_order` once checked - never a
+  URL's /en-US/ display segment), otherwise AMBIGUOUS. A label AFTER a date
+  belongs to the next date ("Programme dates: ... 20 Aug 2027 Application
+  deadline: 21 Oct 2026", INT-000378); a broad field spelled out ("STEM
+  (science, ... mathematics)", INT-000372) is BROAD_FIELD, never an exclusion.
+  A label names the first date after it, not a later one ("Closing Date: 5 Oct
+  ... Campaign September 2026") unless they are a list. A page stating several
+  different deadlines is a board of vacancies (INT-001101): its dates are
+  UNATTRIBUTED and its open/closed wording is not the row's - the row keeps its
+  value, REVIEW - unless the row's own title heads one date (`tie_to_vacancy`).
+  Postings arrive flattened, so `relevance.clauses` rebuilds the boundaries
+  (sentences, headings, run-together bullets, never after "e.g."); degree
+  subjects are read per clause and must be what the study phrase names, and a
+  subject list is required only by its own wording or a heading that says so
+  ("Requirements", not "What we're looking for"). A non-computing keyword
+  counts as a duty only in context (`_not_a_duty`, `business_context` in
+  config/relevance.yaml): "commercial", "brand" and "portfolio" never count on
+  their own, nor do skills ("commercial awareness"), tools, the teams the role
+  works with, or degree subjects (INT-001838, -001984, -001934, -001935).
+  The queue (`verify.select_assessed`) rotates and resumes from each row's
+  `last_checked`/`checked_url`: approaching unconfirmed deadlines, then stale
+  UNKNOWNs, then the rest, a quarter of the budget always on the
+  longest-unchecked; rows past an unreliable date (`role_filter.expiry`
+  REVIEW) after those, and rows past a labelled deadline only with budget no
+  live row needs. `assess --dry-run --audit <role-link-audit.csv>` merges a
+  link audit as labelled evidence, re-reading its snippets with the current
+  extractor; an audit "closed" without the employer's words stays REVIEW. Pages are
   judged by content, not URL: a posting at `/apply` is read, a sign-in /
-  upload / applicant-data form is an application step and is not. All of it
-  is OFF until `apply_to_workbook: true`; `main.py assess --dry-run` shows the
+  upload / applicant-data form is an application step and is not. It is ON
+  since 2026-10-03 (`apply_to_workbook: true`, applied by the user's approval of
+  data/checkpoint/pre-apply-review-20261003-1700-v4; backup in
+  data/checkpoint/backups/before-assessment-apply-20261003-172847). Setting it
+  false returns to the title filter; `main.py assess --dry-run` shows the
   effect and writes only `data/checkpoint/assess-dry-run/`; `--apply` refuses
-  while it is off.
+  while it is off. With it on, the layout pass skips its title check (a title
+  never removes a row) and checks instead that no hidden row reached the sheet.
 - **Notes is user-only.** No adapter or scorer may write to `job.notes`;
   `build_job()` has no `notes` parameter on purpose. Platform facts go in their
   own fields (`cv`, `written_answers`, `cover_letter`) or the description.

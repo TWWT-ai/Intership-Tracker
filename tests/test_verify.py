@@ -64,7 +64,7 @@ class TestOpenStatus:
         verify.verify_job(session, job, SETTINGS)
         assert job.open_status is OpenStatus.UNKNOWN
 
-    def test_404_on_application_page_means_closed(self):
+    def test_404_on_application_page_is_unavailable_not_closed(self):
         job = make_job()
         session = FakeSession({
             job.source_url: page("A great place to work."),
@@ -72,7 +72,8 @@ class TestOpenStatus:
         })
 
         verify.verify_job(session, job, SETTINGS)
-        assert job.open_status is OpenStatus.CLOSED
+        assert job.open_status is OpenStatus.UNKNOWN
+        assert "returned 404" in job.verification_note                # read as UNAVAILABLE by the assessment
 
     def test_footer_boilerplate_does_not_close_every_job(self):
         """A site-wide footer would otherwise close the whole platform."""
@@ -87,12 +88,33 @@ class TestOpenStatus:
         verify.verify_job(session, job, SETTINGS)
         assert job.open_status is OpenStatus.OPEN
 
-    def test_passed_deadline_implies_closed(self):
+    def test_a_passed_deadline_is_expiry_not_closure(self):
         job = make_job(deadline=date.today() - timedelta(days=3))
         session = FakeSession({job.source_url: page("Nothing conclusive.")})
 
         verify.verify_job(session, job, SETTINGS)
-        assert job.open_status is OpenStatus.CLOSED
+        assert job.open_status is OpenStatus.UNKNOWN
+        assert "deadline passed (expiry, not closure)" in job.verification_note
+        assert job.closed_evidence == "" and job.hiring_status != "EMPLOYER_CLOSED"
+
+    def test_closure_wording_on_the_employer_page_is_recorded_with_its_words(self):
+        job = make_job(deadline=date.today() - timedelta(days=3))
+        session = FakeSession({job.source_url: page("Applications closed for this role.")})
+
+        verify.verify_job(session, job, SETTINGS)
+        assert job.open_status is OpenStatus.CLOSED and job.hiring_status == "EMPLOYER_CLOSED"
+        assert '"applications closed"' in job.closed_evidence
+
+    def test_an_aggregator_saying_closed_is_only_a_listing_claim(self):
+        job = make_job()
+        job.source_url = job.sources[0].source_url = "https://www.gradcracker.com/hub/1/x/job/9"
+        session = FakeSession({job.source_url: page("Applications closed for this role."),
+                               job.application_url: page("A great place to work.")})
+
+        verify.verify_job(session, job, SETTINGS)
+        assert job.application_url in session.requested                 # the employer is asked
+        assert job.open_status is OpenStatus.UNKNOWN and job.hiring_status == "LISTING_CLOSED"
+        assert job.closed_evidence == ""
 
 
 class TestDeadlineDiscovery:

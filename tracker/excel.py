@@ -93,6 +93,8 @@ COLUMNS: list[tuple[str, str]] = [
 ]
 
 _CATALOGUE = dict(COLUMNS)
+#: Shown only while the assessment is on (config/relevance.yaml).
+_ASSESSED = {"Deadline Status": "deadline_marker", "Hiring Status": "hiring_status"}
 
 #: Where the user records how far an application got. Workbooks written before
 #: it replaced the separate Applications sheet call it "Status".
@@ -142,7 +144,14 @@ def columns() -> list[tuple[str, str]]:
     if unknown:
         log.warning("config/workbook.yaml names unknown columns, ignored: %s", ", ".join(unknown))
 
-    labels = list(dict.fromkeys(label for label in wanted if label in _CATALOGUE))
+    labels = list(dict.fromkeys(label for label in wanted if label in _CATALOGUE or label in _ASSESSED))
+    from tracker import role_filter
+    if role_filter.enabled():
+        # The assessment's two findings the user scans the sheet for, each
+        # beside the column it qualifies - expiry is never a hiring status.
+        for label, after in (("Deadline Status", "Deadline"), ("Hiring Status", "Open Status")):
+            if label not in labels:
+                labels.insert(labels.index(after) + 1 if after in labels else len(labels), label)
     # User state is matched back to rows by ID and lives in Application Status,
     # so a layout without either would silently lose every status set.
     if "ID" not in labels:
@@ -150,7 +159,7 @@ def columns() -> list[tuple[str, str]]:
     if STATUS_COLUMN not in labels:
         at = labels.index("Notes") if "Notes" in labels else len(labels)
         labels.insert(at, STATUS_COLUMN)
-    return [(label, _CATALOGUE[label]) for label in labels]
+    return [(label, _CATALOGUE.get(label) or _ASSESSED[label]) for label in labels]
 
 
 def col_index() -> dict[str, int]:
@@ -377,10 +386,9 @@ def sort_jobs(jobs: list[Job]) -> list[Job]:
 
     def is_dead(job: Job) -> bool:
         if filtering:
-            # Only employer evidence makes a role dead; a platform-listed date
-            # that has passed is a question, not an answer.
-            return bool(role_filter.closed_by_employer(job)) or bool(
-                job.deadline_confirmed and job.deadline_confirmed < today)
+            # Every past-deadline role sinks to the bottom (with its EXPIRED
+            # marker), whatever its hiring status - expiry is not closure.
+            return bool(job.deadline and job.deadline < today) or role_filter.employer_closed(job)
         return job.open_status is OpenStatus.CLOSED or bool(
             job.deadline and job.deadline < today
         )
@@ -473,6 +481,10 @@ def _style_row(ws, row: int, job: Job, styles: dict, idx: dict[str, int], flags:
         priority_cell.fill = _PRIORITY_FILLS.get(job.priority, _PRIORITY_FILLS[Priority.LOW])
         priority_cell.font = Font(bold=True)
         priority_cell.alignment = Alignment(horizontal="center")
+
+    if (marker := at("Deadline Status")) and str(marker.value or "").startswith("EXPIRED"):
+        marker.fill = PatternFill("solid", fgColor="D9D9D9")
+        marker.font = Font(bold=True, color="595959")
 
     if open_cell := at("Open Status"):
         open_cell.fill = _OPEN_FILLS.get(job.open_status, _OPEN_FILLS[OpenStatus.UNKNOWN])
@@ -772,9 +784,10 @@ _ASSESSMENT_COLUMNS = [
     ("Study level", 16), ("Study reason", 32), ("Study evidence (quoted)", 44),
     ("Degree subject", 16), ("Degree reason", 32), ("Degree evidence (quoted)", 44),
     ("Eligible for You", 12), ("Eligibility reason", 32),
-    ("Deadline", 12), ("Deadline status", 12), ("Employer-confirmed", 12), ("Provisional (kept apart)", 12),
-    ("Deadline reason", 32), ("Deadline candidates", 60),
-    ("Text source", 36), ("Last checked", 12), ("Check outcome", 18),
+    ("Deadline", 12), ("Deadline marker", 18), ("Deadline status", 12), ("Employer-confirmed", 12),
+    ("Provisional (kept apart)", 12), ("Deadline reason", 32), ("Deadline candidates", 60),
+    ("Hiring status", 14), ("Hiring evidence", 40),
+    ("Text source", 36), ("Last checked", 12), ("Checked URL", 40), ("Check outcome", 18),
 ]
 
 
@@ -803,9 +816,11 @@ def _write_assessment_sheet(wb: Workbook, jobs: list[Job], today: dt.date) -> No
                    safe(job.study_level), safe(job.study_level_reason), safe(job.study_level_evidence),
                    safe(job.degree_subject_fit), safe(job.degree_subject_reason), safe(job.degree_subject_evidence),
                    safe(job.eligible_for_you), safe(job.eligibility_reason),
-                   job.deadline, safe(job.deadline_status), job.deadline_confirmed, job.deadline_provisional,
-                   safe(job.deadline_reason), safe(candidates)[:2000],
-                   safe(job.assessment_text_source), safe(job.last_checked[:10]), safe(job.check_outcome)])
+                   job.deadline, safe(job.deadline_marker), safe(job.deadline_status), job.deadline_confirmed,
+                   job.deadline_provisional, safe(job.deadline_reason), safe(candidates)[:2000],
+                   safe(job.hiring_status), safe(job.hiring_evidence),
+                   safe(job.assessment_text_source), safe(job.last_checked[:16]), safe(job.checked_url),
+                   safe(job.check_outcome)])
     for i, (_, width) in enumerate(_ASSESSMENT_COLUMNS, start=1):
         ws.column_dimensions[get_column_letter(i)].width = width
     for row in ws.iter_rows(min_row=2):

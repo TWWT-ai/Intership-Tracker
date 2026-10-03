@@ -31,6 +31,24 @@ where the truth lives, because its `url` field points straight at the ATS.
 | `CLOSED` | Confirmed closed, or the deadline has passed, or the ATS page 404s |
 | `UNKNOWN` | Verification ran and could not tell |
 
+That table is the old checker, still live while `apply_to_workbook` is false.
+Under the assessment (`tracker/role_filter.py`) hiring and expiry are separate
+findings, and **only the employer's own closure wording is CLOSED**:
+
+- A passed deadline is EXPIRED: the row stays, at the bottom, with its marker.
+  It is never closure. `role_filter.expiry` calls it reliable only when a
+  labelled deadline backs it (the employer page, a platform's deadline field,
+  deadline wording); a listing's validThrough alone, a conflict, or a date
+  from a page of several vacancies is REVIEW.
+- A 404/410 is UNAVAILABLE, not closed.
+- An older CLOSED with no recorded wording is UNKNOWN: the old checker closed
+  every passed deadline, and its note is not carried between runs.
+- A page listing several vacancies with different closing dates speaks for
+  none of them (INT-001101). Its dates are UNATTRIBUTED and its open/closed
+  wording is not this role's, unless the row's own title heads the date.
+- The queue (`verify.select_assessed`) spends checks on rows past a reliable
+  deadline only after every live row has had its turn.
+
 `UNKNOWN` is an answer, not a gap to be filled. Showing it as OPEN would imply a
 confidence nothing supports. It is displayed as UNKNOWN, capped at MEDIUM
 priority so it cannot displace a confirmed-open role, and always re-checked on

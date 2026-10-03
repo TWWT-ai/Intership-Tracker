@@ -34,6 +34,16 @@ def isolated_data(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def assessment_off(monkeypatch):
+    """Start every test with the posting assessment off, so the suite does not
+    depend on the user's own `apply_to_workbook` in config/relevance.yaml.
+    Tests of the assessment switch it on themselves (`on` in test_role_filter)."""
+    from tracker import role_filter
+
+    monkeypatch.setattr(role_filter, "enabled", lambda: False)
+
+
+@pytest.fixture(autouse=True)
 def full_layout(monkeypatch):
     """Show every column, so tests do not depend on the user's own layout in
     config/workbook.yaml. Tests of the layout itself override this."""

@@ -147,21 +147,29 @@ def verify_all(session, jobs: list[Job], settings: dict | None = None) -> Verifi
 
 def verify_job(session, job: Job, settings: dict) -> None:
     """Establish this job's open/closed state and its real deadline."""
+    from tracker import role_filter
+
     previous_deadline = job.deadline
     status = OpenStatus.UNKNOWN
     notes: list[str] = []
+    said_closed = ""                      # the page whose wording said closed
+    texts: dict[str, str] = {}
 
     # 1. The listing page on the platform we found it on.
     if job.source_url:
-        status, deadline, note, _ = _inspect(session, job.source_url, settings)
+        status, deadline, note, texts[job.source_url] = _inspect(session, job.source_url, settings)
         if note:
             notes.append(note)
         if deadline:
             _set_deadline(job, deadline, "job-page")
+        if status is OpenStatus.CLOSED:
+            said_closed = job.source_url
 
     # 2. The employer's own application page, when the listing did not settle
-    #    it. For Trackr rows this is where the truth actually lives.
-    needs_employer_check = status is OpenStatus.UNKNOWN or job.deadline is None
+    #    it. For Trackr rows this is where the truth actually lives - and an
+    #    aggregator saying "closed" is only a claim, so the employer is asked.
+    needs_employer_check = (status is OpenStatus.UNKNOWN or job.deadline is None
+                            or (status is OpenStatus.CLOSED and role_filter.aggregator(job.source_url)))
     application_url = job.application_url
 
     if (
@@ -171,6 +179,7 @@ def verify_job(session, job: Job, settings: dict) -> None:
         and application_url != job.source_url
     ):
         ats_status, ats_deadline, note, page_text = _inspect(session, application_url, settings)
+        texts[application_url] = page_text
         if note:
             notes.append(note)
         # The employer's posting says who may apply, which names the programme
@@ -184,11 +193,26 @@ def verify_job(session, job: Job, settings: dict) -> None:
             _set_deadline(job, ats_deadline, "employer-ats")
         if ats_status is not OpenStatus.UNKNOWN:
             status = ats_status
+            said_closed = application_url if ats_status is OpenStatus.CLOSED else ""
 
-    # A deadline that has already passed is itself proof the role has closed.
-    if status is not OpenStatus.CLOSED and job.deadline and job.deadline < date.today():
-        status = OpenStatus.CLOSED
-        notes.append("Deadline has passed")
+    # Expiry and hiring are separate findings. A passed deadline is noted,
+    # never turned into CLOSED: that was how 323 rows came to say CLOSED with
+    # no employer ever saying so. Only closure wording on the employer's own
+    # page is CLOSED; an aggregator's is recorded as a listing claim.
+    if job.deadline and job.deadline < date.today():
+        notes.append("deadline passed (expiry, not closure)")
+    if status is OpenStatus.CLOSED:
+        text_page = said_closed or job.source_url
+        marker = next((m for m in settings.get("closed_markers", [])
+                       if m in (texts.get(text_page) or "").casefold()), "closed wording")
+        evidence = f'"{marker}" on {text_page} ({date.today().isoformat()})'
+        if role_filter.aggregator(text_page):
+            job.hiring_status, job.hiring_evidence = role_filter.LISTING_CLOSED, evidence + " - listing only"
+            status = OpenStatus.UNKNOWN
+        else:
+            job.hiring_status, job.hiring_evidence = role_filter.EMPLOYER_CLOSED, evidence
+            job.closed_evidence = f'employer page says "{marker}" ({_host(text_page)})'
+        job.checked_url = text_page
 
     job.open_status = status
     job.last_verified = datetime.now().replace(microsecond=0)
@@ -233,7 +257,7 @@ def _inspect(session, url: str, settings: dict,
         return OpenStatus.UNKNOWN, None, f"could not reach {_host(url)}", ""
 
     if response.status in (404, 410):
-        if settings.get("treat_404_as_closed", True):
+        if settings.get("treat_404_as_closed", False):
             return OpenStatus.CLOSED, None, f"{_host(url)} returned {response.status}", ""
         return OpenStatus.UNKNOWN, None, f"{_host(url)} returned {response.status}", ""
 
@@ -376,6 +400,9 @@ from datetime import datetime as _datetime
 
 #: Less posting text than this is a script-built shell, not a read posting.
 _MIN_PAGE_TEXT = 300
+#: select_assessed: rows past a reliable (labelled) deadline - last, and only
+#: with budget no live row needs.
+EXPIRED_TIER = 9
 
 
 @_dataclass
@@ -534,49 +561,83 @@ def ats_posting(session, url: str) -> PageRead | None:
 
 
 def select_assessed(jobs: list[Job], settings: dict, today: date | None = None) -> tuple[list[Job], list[Job]]:
-    """(to check this run, over budget) - the budget spent where a missing
-    employer confirmation costs most. Rows without an own employer posting
-    are not queued; they are reported instead."""
+    """(to check this run, left for later) - a rotating, resumable queue.
+
+    Each row keeps when it was last checked (`last_checked`, carried between
+    runs), so the queue resumes where the last run stopped. Most of the budget
+    goes by priority - an approaching deadline the employer has not confirmed,
+    then a stale UNKNOWN hiring status, then conflicts, then never-checked
+    rows - and a quarter always goes to whatever was checked longest ago, so
+    no employer posting waits forever behind higher tiers. Rows past an
+    unreliable date (validThrough only, a conflict) come after those, and
+    rows past a labelled deadline (`role_filter.expiry` EXPIRED) only take
+    budget no live row needs. Rows without an own employer posting are not
+    queued; they are reported instead.
+    """
     from tracker import role_filter
 
     today = today or date.today()
     budget = settings.get("budget", {})
     limit = int(config.env_override("MAX_VERIFICATIONS") or budget.get("max_verifications", 120))
     revalidate = int(budget.get("revalidate_after_days", 3))
+    soon = int((budget.get("always_verify") or {}).get("deadline_within_days", 14))
     far = date(2099, 12, 31)
 
-    def tier(job: Job) -> int | None:
-        confirmed = job.deadline_status == "CONFIRMED"
-        if job.deadline and job.deadline < today and not confirmed:
-            return 0
-        if job.deadline and job.deadline >= today and not confirmed:
-            return 1
-        if job.deadline_status in ("CONFLICT", "AMBIGUOUS"):
-            return 2
-        if not job.last_checked and job.last_verified is None:
-            return 3
-        last = job.last_verified or (_datetime.fromisoformat(job.last_checked) if job.last_checked else None)
-        if last is None or (_datetime.now() - last) > timedelta(days=revalidate):
-            return 4
-        return None
+    def last(job: Job):
+        if job.last_checked:
+            try:
+                return _datetime.fromisoformat(job.last_checked)
+            except ValueError:
+                pass
+        return job.last_verified
 
-    queue = []
+    def tier(job: Job) -> int | None:
+        checked = last(job)
+        stale = checked is None or (_datetime.now() - checked) > timedelta(days=revalidate)
+        if not stale:
+            return None
+        expired, _ = role_filter.expiry(job, today)
+        if expired == "EXPIRED":
+            # Past a labelled deadline: a check can change little, so it waits
+            # until every live row has had its turn (EXPIRED_TIER).
+            return EXPIRED_TIER
+        if expired == "REVIEW":
+            return 5            # passed on an unreliable date: worth settling, after the live rows
+        if job.deadline and 0 <= (job.deadline - today).days <= soon and not job.deadline_confirmed:
+            return 0
+        if checked is not None and job.hiring_status in ("", role_filter.UNKNOWN):
+            return 1
+        if job.deadline_status in ("CONFLICT", "AMBIGUOUS", "UNATTRIBUTED"):
+            return 2
+        if checked is None:
+            return 3
+        return 4
+
+    due = []
     for job in jobs:
         url = job.application_url
         if not (_single_posting(url) and not role_filter.aggregator(url)):
             job.check_outcome = "no_employer_url"
             continue
-        if role_filter.touched(job) and job.open_status is OpenStatus.CLOSED:
-            continue
         rank = tier(job)
         if rank is None:
+            job.check_outcome = job.check_outcome or "not_due"
             continue
-        passed = (today - job.deadline).days if job.deadline and job.deadline < today else 0
-        queue.append(((rank, passed if rank == 0 else 0, job.deadline or far,
-                       job.change_type != "NEW", job.last_checked or ""), job))
-    queue.sort(key=lambda item: item[0])
-    chosen = [job for _, job in queue[:limit]]
-    later = [job for _, job in queue[limit:]]
+        due.append((rank, job))
+    oldest = lambda job: (last(job) or _datetime.min, job.id)  # noqa: E731
+    # Rows past a labelled deadline are checked only once no live row is
+    # waiting: the 3 October fetch spent 98 of its 100 pages on them.
+    live = [(rank, job) for rank, job in due if rank != EXPIRED_TIER]
+    by_priority = sorted(live, key=lambda item: (item[0], item[1].deadline or far, oldest(item[1])))
+    rotation = max(1, limit // 4) if limit > 1 else 0
+    chosen = [job for _, job in by_priority[:max(0, limit - rotation)]]
+    picked = {id(job) for job in chosen}
+    rest = sorted((job for _, job in live if id(job) not in picked), key=oldest)
+    chosen += rest[:limit - len(chosen)]
+    expired = sorted((job for rank, job in due if rank == EXPIRED_TIER), key=oldest)
+    chosen += expired[:max(0, limit - len(chosen))]
+    picked = {id(job) for job in chosen}
+    later = [job for _, job in due if id(job) not in picked]
     for job in later:
         job.check_outcome = "over_budget"
     return chosen, later
@@ -591,8 +652,11 @@ def verify_assessed(session, job: Job, settings: dict, blocked: set[str], listin
     job.checks_attempted += 1
     job.last_checked = _datetime.now().replace(microsecond=0).isoformat()
     url = job.application_url
+    job.checked_url = url
     host = _host(url).casefold()
     if host in blocked:
+        job.verification_note = f"{host} refused an earlier request this run; skipped, not bypassed"
+        _keep_or_unknown(job, job.verification_note)
         return "blocked"
     page = ats_posting(session, url) or read_page(
         session, url, settings, allow_browser=browser and not role_filter.aggregator(url))
@@ -600,28 +664,53 @@ def verify_assessed(session, job: Job, settings: dict, blocked: set[str], listin
     if page.kind in ("blocked", "robots", "unreachable", "application_step", "no_text"):
         if page.kind == "blocked":
             blocked.add(host)
+        _keep_or_unknown(job, page.note)
         return page.kind
     if page.kind == "closed":
-        job.open_status = OpenStatus.CLOSED
-        job.closed_evidence = page.note
+        # Gone from its URL. Not evidence that hiring closed: UNAVAILABLE.
+        job.hiring_status, job.hiring_evidence = "UNAVAILABLE", f"{page.note} - checked {url}"
         job.last_verified = _datetime.now().replace(microsecond=0)
+        role_filter.assess_row(job, listings, today)
         return "checked"
 
-    status = _status_from_text(page.text, settings)
-    if status is OpenStatus.CLOSED:
-        marker = next((m for m in settings.get("closed_markers", []) if m in page.text.casefold()), "")
-        job.closed_evidence = f"employer page says \"{marker}\" ({_host(url)})"
-    job.open_status = status
-    # Fresh employer-page evidence replaces the last read of the same page.
     own = relevance.own_page(job, url)
     # Only the page's own declared language. A URL segment such as Workday's
     # /en-US/ is the site's display language, not how the recruiter wrote the
     # date - a UK posting shown under /en-US/ would read 03/10 as 10 March.
     order = dx.order_from_locale(page.locale)
     basis = f"page language {page.locale}" if order else ""
+    found = dx.tie_to_vacancy(
+        dx.candidates(page.text, source="employer page", url=url, method="employer page", employer_page=own,
+                      order=order, order_basis=basis, places_pattern=relevance._uk_places()),
+        page.text, job.job_title)
+    board = len({c.date for c in found if c.status == dx.OK and c.date}) >= 2 and not any(c.vacancy for c in found)
+
+    status = _status_from_text(page.text, settings)
+    when = job.last_checked[:10]
+    marker = next((m for m in settings.get("closed_markers" if status is OpenStatus.CLOSED else "open_markers", [])
+                   if m in page.text.casefold()), "")
+    if status is OpenStatus.UNKNOWN:
+        job.hiring_status, job.hiring_evidence = "UNKNOWN", f"posting read on {url} ({when}); no open/closed wording"
+    elif board:
+        # A page of several vacancies: its open/closed wording may be another
+        # role's, exactly as its dates are (INT-001101).
+        status = OpenStatus.UNKNOWN
+        job.hiring_status = "UNKNOWN"
+        job.hiring_evidence = (f'"{marker}" on {url} ({when}), but the page lists several vacancies with different '
+                               "closing dates - not tied to this role")
+    elif not own:
+        # Not the row's own posting for its place: a claim, not the employer's word on this role.
+        job.hiring_status = "LISTING_OPEN" if status is OpenStatus.OPEN else "LISTING_CLOSED"
+        job.hiring_evidence = f'"{marker}" on {url} ({when}) - not this row\'s own posting for its place'
+        status = OpenStatus.UNKNOWN
+    elif status is OpenStatus.CLOSED:
+        job.closed_evidence = f"employer page says \"{marker}\" ({_host(url)})"
+        job.hiring_status, job.hiring_evidence = "EMPLOYER_CLOSED", f'"{marker}" on {url} ({when})'
+    else:
+        job.hiring_status, job.hiring_evidence = "EMPLOYER_OPEN", f'"{marker}" on {url} ({when})'
+    job.open_status = status
+    # Fresh employer-page evidence replaces the last read of the same page.
     evidence = [c for c in job.deadline_evidence if not (c.get("method") == "employer page" and c.get("url") == url)]
-    found = dx.candidates(page.text, source="employer page", url=url, method="employer page", employer_page=own,
-                          order=order, order_basis=basis, places_pattern=relevance._uk_places())
     if page.valid_through:
         structured = dx.mentions(page.valid_through)
         if structured and structured[0].value:
@@ -639,6 +728,13 @@ def verify_assessed(session, job: Job, settings: dict, blocked: set[str], listin
     job.last_verified = _datetime.now().replace(microsecond=0)
     role_filter.assess_row(job, listings, today)
     return "checked"
+
+
+def _keep_or_unknown(job: Job, why: str) -> None:
+    """A failed check leaves an earlier employer result standing; otherwise the
+    hiring status is UNKNOWN, with the reason."""
+    if job.hiring_status not in ("EMPLOYER_OPEN", "EMPLOYER_CLOSED", "UNAVAILABLE"):
+        job.hiring_status, job.hiring_evidence = "UNKNOWN", f"not read: {why}"
 
 
 def _verify_all_assessed(session, jobs: list[Job], settings: dict, stats: VerificationStats) -> VerificationStats:

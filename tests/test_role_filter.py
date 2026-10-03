@@ -44,7 +44,7 @@ def technical(job):
 
 # ---------------------------------------------------------------- off by default
 
-def test_off_by_default_nothing_changes():
+def test_with_the_assessment_off_nothing_changes():
     assert role_filter.enabled() is False
     keep, other = rows(make_job(company="Keep", title="Data Intern"), make_job(company="Other", title="Audit Intern"))
     other.role_relevance = relevance.NOT_TECHNICAL
@@ -70,30 +70,46 @@ def test_firm_evidence_hides_unclear_and_unassessed_stay(on):
     assert "Deadline candidates" in header and "Eligible for You" in header
 
 
-def test_a_passed_listed_deadline_stays_visible_for_review(on):
+def test_a_passed_listed_deadline_stays_visible_and_is_marked_expired(on):
     listed = rows(make_job(company="L", title="Software Intern", deadline=PAST))[0]
     listed.deadline_status = dx.LISTED
     assert role_filter.decide(listed, TODAY)[0] == role_filter.SHOW
-    assert "listed deadline has passed - not confirmed by the employer" in role_filter.decide(listed, TODAY)[1]
+    assert "deadline passed - listed date, not confirmed by the employer" in role_filter.decide(listed, TODAY)[1]
+    assert role_filter.deadline_marker(listed, TODAY) == "EXPIRED (listed date, not employer-confirmed)"
 
 
-def test_a_passed_employer_confirmed_deadline_hides(on):
+def test_a_passed_employer_confirmed_deadline_is_kept_and_marked_not_closed(on):
     job = rows(make_job(company="E", title="Software Intern", deadline=PAST))[0]
     job.deadline_status, job.deadline_confirmed = dx.CONFIRMED, PAST
-    assert role_filter.decide(job, TODAY)[0] == role_filter.HIDE
+    job.hiring_status, job.hiring_evidence = role_filter.hiring_status(job)
+    assert role_filter.decide(job, TODAY)[0] == role_filter.SHOW
+    assert role_filter.deadline_marker(job, TODAY) == "EXPIRED (employer-confirmed date)"
+    assert job.hiring_status == role_filter.UNKNOWN                  # expiry is not closure
 
 
-def test_a_passed_employer_date_hides_even_when_another_source_disagrees(on):
-    job = rows(make_job(company="M", title="AI Summer Internship", deadline=PAST))[0]
-    job.deadline_status, job.deadline_confirmed = dx.CONFLICT, PAST
-    job.deadline_provisional = PAST - timedelta(days=14)
-    assert role_filter.decide(job, TODAY)[0] == role_filter.HIDE
+def test_expired_rows_sort_to_the_bottom_whatever_their_hiring_status(on):
+    expired_open, upcoming, expired_unknown = rows(
+        make_job(company="A", title="Old Open", deadline=PAST), make_job(company="B", title="Soon", deadline=SOON),
+        make_job(company="C", title="Old Unknown", deadline=PAST - timedelta(days=3)))
+    expired_open.hiring_status = role_filter.EMPLOYER_OPEN
+    assert [j.company for j in excel.sort_jobs([expired_open, upcoming, expired_unknown])][0] == "B"
+    excel.write([expired_open, upcoming, expired_unknown])
+    ws = load_workbook(config.WORKBOOK)[excel.SHEET_JOBS]
+    header = [c.value for c in ws[1]]
+    assert header.index("Deadline Status") == header.index("Deadline") + 1
+    assert header.index("Hiring Status") == header.index("Open Status") + 1
+    marks = [ws.cell(r, header.index("Deadline Status") + 1).value for r in range(2, ws.max_row + 1)]
+    assert marks[0] in ("", None) and all(str(m).startswith("EXPIRED") for m in marks[1:])
 
 
-def test_an_explicitly_closed_posting_hides(on):
-    job = rows(make_job(company="E", title="Software Intern", deadline=SOON))[0]
-    job.closed_evidence = 'employer page says "applications are closed" (jobs.example.com)'
-    assert role_filter.decide(job, TODAY)[0] == role_filter.HIDE
+def test_an_explicitly_closed_posting_stays_at_the_bottom_marked_closed(on):
+    closed, live = rows(make_job(company="E", title="Software Intern", deadline=SOON),
+                        make_job(company="F", title="Software Intern", deadline=SOON + timedelta(days=30)))
+    closed.closed_evidence = 'employer page says "applications are closed" (jobs.example.com)'
+    decision, reason = role_filter.decide(closed, TODAY)
+    assert decision == role_filter.SHOW and reason.startswith("CLOSED")
+    assert role_filter.open_status(closed) is OpenStatus.CLOSED
+    assert [j.company for j in excel.sort_jobs([closed, live])] == ["F", "E"]   # sorted to the bottom
 
 
 def test_your_status_keeps_any_row_through_a_full_rebuild(on):
@@ -194,12 +210,14 @@ def test_an_en_us_link_does_not_make_a_uk_date_month_first(on):
     assert [(c["date"], c["status"]) for c in page] == [("", dx.AMBIGUOUS)]
 
 
-def test_a_posting_the_feed_no_longer_has_is_closed(on):
+def test_a_posting_the_feed_no_longer_has_is_unavailable_not_closed(on):
     job = rows(make_job(company="Lloyds", title="Software Placement", deadline=PAST, application_url=WORKDAY_URL))[0]
     outcome = verify.verify_assessed(FakeSession({WORKDAY_API: (404, "")}), job, config.load("verification"), set(),
                                      relevance.Listings([]), TODAY)
-    assert outcome == "checked" and "404" in job.closed_evidence
-    assert role_filter.decide(job, TODAY)[0] == role_filter.HIDE
+    assert outcome == "checked" and job.hiring_status == role_filter.UNAVAILABLE
+    assert job.closed_evidence == "" and job.open_status is not OpenStatus.CLOSED
+    assert role_filter.decide(job, TODAY)[0] == role_filter.SHOW
+    assert job.checked_url == WORKDAY_URL and job.last_checked
 
 
 def test_a_script_built_page_is_not_counted_as_checked(on):
@@ -222,22 +240,28 @@ def test_a_passed_listed_date_never_closes_a_row_by_itself(on):
 
 # ---------------------------------------------------------------- coverage and priority
 
-def test_unconfirmed_passed_deadlines_are_checked_first_and_the_rest_wait(monkeypatch):
-    settings = dict(config.load("verification"), budget={"max_verifications": 2, "revalidate_after_days": 3})
-    passed = make_job(company="P", title="A", deadline=PAST, application_url="https://jobs.p.com/job/1")
-    soon = make_job(company="S", title="B", deadline=SOON, application_url="https://jobs.s.com/job/2")
-    fresh = make_job(company="F", title="C", application_url="https://jobs.f.com/job/3")
-    aggregator = make_job(company="G", title="D", application_url="https://www.gradcracker.com/hub/1/job")
-    jobs = rows(fresh, soon, passed, aggregator)
+def test_the_queue_puts_approaching_deadlines_then_stale_unknowns_first_and_rotates():
+    settings = dict(config.load("verification"), budget={"max_verifications": 4, "revalidate_after_days": 3,
+                                                          "always_verify": {"deadline_within_days": 14}})
+    soon = make_job(company="Soon", title="A", deadline=SOON, application_url="https://jobs.a.com/job/1")
+    stale = make_job(company="Stale", title="B", application_url="https://jobs.b.com/job/2")
+    stale.last_checked = (datetime.now() - timedelta(days=10)).isoformat()
+    fresh = [make_job(company=f"New{i}", title=f"C{i}", application_url=f"https://jobs.c{i}.com/job/{i}")
+             for i in range(4)]
+    recent = make_job(company="Recent", title="D", application_url="https://jobs.d.com/job/9")
+    recent.last_checked, recent.hiring_status = datetime.now().isoformat(), role_filter.EMPLOYER_OPEN
+    aggregator = make_job(company="Agg", title="E", application_url="https://www.gradcracker.com/hub/1/job")
+    jobs = rows(*fresh, stale, soon, recent, aggregator)
     chosen, later = verify.select_assessed(jobs, settings, TODAY)
-    assert [j.company for j in chosen] == ["P", "S"] and [j.company for j in later] == ["F"]
-    assert fresh.check_outcome == "over_budget" and aggregator.check_outcome == "no_employer_url"
-    report = role_filter.coverage(jobs, TODAY)
-    assert "NOT employer-confirmed" in report["rule"]
-    assert report["unchecked_by_reason"]["Over this run's budget - queued for a later run"] == 1
+    assert [j.company for j in chosen[:2]] == ["Soon", "Stale"]
+    assert len(chosen) == 4 and len(later) == 2                       # 6 due: the rest wait their turn
+    assert all(j.check_outcome == "over_budget" for j in later)
+    assert recent.check_outcome == "not_due" and aggregator.check_outcome == "no_employer_url"
+    for j in chosen:                                                  # this run's checks...
+        j.last_checked, j.hiring_status = datetime.now().isoformat(), role_filter.EMPLOYER_OPEN
+    again, _ = verify.select_assessed(jobs, settings, TODAY)
+    assert {j.company for j in again} == {j.company for j in later}   # ...so the next run resumes with the rest
 
-
-# ---------------------------------------------------------------- dry run
 
 def test_dry_run_changes_nothing_and_opens_nothing(monkeypatch, tmp_path):
     from sources import fetch
@@ -268,7 +292,7 @@ def test_dry_run_changes_nothing_and_opens_nothing(monkeypatch, tmp_path):
     assert sorted(f.name for f in out.iterdir()) == ["assessment.csv", "calendar-impact.csv", "summary.json"]
     assert s["findings"]["role_relevance"] == {"TECHNICAL": 1, "NOT_TECHNICAL": 1, "UNCLEAR": 1}
     assert [line.split()[0] for line in s["sheet"]["leaving"]] == [audit.id]
-    assert s["sheet"]["returning_by_reason"] == {"listed deadline passed - not confirmed by the employer": 1}
+    assert s["sheet"]["returning_by_reason"] == {"expired - kept, sorted to the bottom with an EXPIRED marker": 1}
     assert "NOT employer-confirmed" in s["coverage"]["rule"]
     day = s["calendar_days_changed"][0]
     assert day["date"] == SOON.isoformat() and "BDO" in day["roles removed"]

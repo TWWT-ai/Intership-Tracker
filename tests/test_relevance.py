@@ -101,7 +101,8 @@ def test_each_finding_is_recorded_separately_with_its_evidence():
     assert (j.role_relevance, j.study_level, j.degree_subject_fit) == (
         rv.TECHNICAL, rv.CURRENT_UNDERGRADUATE, rv.CS_REQUIRED)
     assert j.role_relevance_evidence and j.study_level_evidence and j.degree_subject_evidence
-    assert j.sheet_decision == role_filter.SHOW and j.sheet_reason == "all findings positive"
+    # Hiring status is its own finding: nothing has read the employer page yet.
+    assert j.sheet_decision == role_filter.SHOW and j.sheet_reason == "REVIEW: hiring UNKNOWN"
 
 
 def test_no_degree_subject_is_not_stated_and_stays_for_review():
@@ -184,8 +185,9 @@ def test_mixed_duties_are_unclear_and_stay():
 
 def test_a_digital_company_introduction_does_not_make_legal_work_technical():
     text = ("About us: We are a digital, technology-driven firm building cloud software for banks. " + PADDING
-            + "Responsibilities: Draft contracts, research areas of law for lawyers and solicitors, and support "
-              "litigation teams with our clients and commercial matters. Requirements: Current undergraduates. ")
+            + "Responsibilities: Draft contracts, research areas of law for lawyers and solicitors, review "
+              "regulatory filings, and support litigation teams with our clients and commercial matters. "
+              "Requirements: Current undergraduates. ")
     assert assess(job(title="Vacation Placement", text=text)).role_relevance == rv.NOT_TECHNICAL
 
 

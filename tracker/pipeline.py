@@ -19,7 +19,7 @@ from pathlib import Path
 
 from sources import brightnetwork, careers, gradcracker, trackr, higherin, targetjobs
 from sources.fetch import Session, SourceBlocked, SourceError
-from tracker import config, dedupe, deadlines, eligibility, excel, graduation, match, verify, programme
+from tracker import config, dedupe, deadlines, eligibility, excel, graduation, match, programme, role_filter, verify
 from tracker.models import ApplicationStatus, ChangeType, Job, OpenStatus, Priority
 
 log = logging.getLogger("tracker")
@@ -336,7 +336,10 @@ def _restore_state(jobs: list[Job], previous: dict[str, Job]) -> None:
             job.date_found = old.date_found or job.date_found
             job.date_posted = job.date_posted or old.date_posted
             job.last_verified = old.last_verified
-            job.open_status = old.open_status
+            # A carried CLOSED needs the employer's recorded words. An older
+            # one without them came from a passed deadline or a 404 and is
+            # UNKNOWN (role_filter.open_status); expiry is not closure.
+            job.open_status = role_filter.open_status(old)
             # A deadline with no page behind it may have been merged in from
             # another round of the programme, so it is not resurrected.
             if (old.deadline and not job.deadline
@@ -350,8 +353,14 @@ def _restore_state(jobs: list[Job], previous: dict[str, Job]) -> None:
             eligibility.carry(job, old)
             # Assessment evidence from pages read on earlier nights: a page is
             # not re-read every run, so what it said must travel with the row.
-            job.deadline_evidence = [c for c in old.deadline_evidence if c.get("method") == "employer page"]
+            job.deadline_evidence = [c for c in old.deadline_evidence if c.get("method") == "employer page"
+                                     or str(c.get("method", "")).startswith("link audit")]
             job.closed_evidence = old.closed_evidence
+            # The hiring finding and the page behind it travel too: without
+            # them an old CLOSED loses its reason overnight and cannot be told
+            # apart from the employer's own word.
+            job.hiring_status, job.hiring_evidence = old.hiring_status, old.hiring_evidence
+            job.checked_url = old.checked_url
             job.last_checked, job.check_outcome = old.last_checked, old.check_outcome
             job.checks_attempted = old.checks_attempted
             if old.description_source.startswith("page:") and not job.description_source.startswith("page:"):

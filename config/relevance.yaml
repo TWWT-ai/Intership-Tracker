@@ -17,7 +17,23 @@
 # false, nothing here changes the workbook, the nightly scan, verification or
 # the calendar. True: the rules above decide the sheet, an Assessment sheet
 # explains every row, and verification gathers deadline evidence.
-apply_to_workbook: false
+apply_to_workbook: true
+
+# Exclusions the posting does not clearly support, found by reading each one
+# in context (data/checkpoint/pre-apply-review-*). The finding is kept as
+# evidence, but the row stays on the sheet as REVIEW. This list can only keep
+# a row visible - it never hides one. Tracker IDs are stable across runs.
+review_not_exclude:
+  INT-001313: "the role evidence is the firm's sector list ('services to clients within the following sectors: ... Property / Asset management'), not the placement's duties"
+  INT-001935: "only Building Surveying is a duty in context; 'compliance' is 'compliance with Savills' brand and policies' (conduct), and 'strategic' is not shown as a duty"
+  INT-001317: "the quotes are the firm's introduction ('we help our clients thrive') and 'trading difficulties' (a client's problem, not trading work); only advisory and tax remain"
+  INT-001321: "the evidence is the firm's capability list (Sustainability, Investment Advisory, Capital Programs...), not the placement's duties"
+  INT-001372: "'Partners' means the John Lewis Partnership's employee-owners, and 'Trading and Retail' names the departments decisions are made with; the role is a supply-chain analyst"
+  INT-001932: "the business words come from 'other departments within Hilton, including; Revenue Management, Pricing, Sales...' (teams it works with); the quoted duty is handling support tickets"
+  INT-001970: "'operations' and 'laboratory' come from 'our key relationships are with our Operations, Laboratory, Engineering and Supply Chain colleagues' - colleagues, not duties"
+  INT-001983: "the duties include 'Use data analysis tools to build out product unit plans'; 'product management' and 'sales' name the teams it supports"
+  INT-001996: "'Product management lifecycle ... stakeholder management, business analysis, problem solving, architecture' - a business-analyst role that includes architecture; not clearly non-computing"
+  INT-002032: "'insurance' is from the benefits list ('Travel Insurance benefits'); 'partners' and 'events' are relationship and perk wording"
 
 # Shown in every dry-run report for the user to review. Never acted on: the
 # profile is only changed by the user.
@@ -108,6 +124,32 @@ business_duties:
   - "advisory|strategy|strategic"
   - "mechanical|aerodynamics|aerodynamic|propulsion|stress analysis|structural analysis|thermal|fluids|fluid dynamics|chemistry|laboratory|clinical|pharmacovigilance|microbiology|nuclear|civil engineering|construction|hydraulic|hydraulics|combustion|machining"
 
+# A non-computing keyword counts as a duty only in its own clause's context
+# (tracker/relevance._not_a_duty). On 3 October these words alone produced 9
+# false NOT_TECHNICAL findings.
+business_context:
+  # Too general to count on their own: "commercial" tools, a personal "brand",
+  # a "portfolio" of projects. The other words on their line still count.
+  weak_words: [commercial, brand, portfolio]
+  # A keyword in a short list ending in one of these is a skill, not a duty.
+  skill_words: [skills, skill, awareness, acumen, mindset, etiquette, flair, sense]
+  # Right after the keyword, these make it describe a tool or product.
+  tool_words: [tools, tool, software, packages, package, codes, modelling tools, modeling tools,
+               off-the-shelf, aircraft, vehicles]
+  # Keywords after one of these in the same clause (and before any "to <verb>")
+  # name who the role works with, not what it does.
+  collaborator_cues: [work with, works with, working with, work closely with, works closely with,
+                      working closely with, work directly with, working directly with, liaise with, liaising with, liaises with, collaborate with,
+                      collaborating with, collaborates with, interact with, interacting with, contact with,
+                      alongside, cross functional, cross-functional, teams such as, functions such as,
+                      departments such as, teams including, colleagues in, colleagues from]
+  # A keyword in an enumerated list ("e.g.", "such as", "including", brackets)
+  # ending in one of these names colleagues.
+  team_nouns: [engineers, teams, team, functions, departments, colleagues, specialists, stakeholders]
+  # Boilerplate about applying or perks, never a duty.
+  not_duty_phrases: [recruitment process, recruitment processes, recruitment stages, recruitment stage,
+                     social events, networking events, personal brand]
+
 # A title naming computing. It never includes a role on its own, but it stops
 # one being EXCLUDED for vague duties: that combination is REVIEW.
 title_technical: [software, developer, technology, technologist, tech, it, cyber, data, analytics,
@@ -132,10 +174,9 @@ incidental: ["using data and technology", "use data and technology", "using data
 # TECHNICAL: at least `technical_min` technical kinds and at least
 # `technical_margin` more technical kinds than other kinds - a trading role that
 # "explores statistical models" is mixed, not computing. NOT_TECHNICAL: at least `business_min` other
-# kinds and no more than `incidental_tech_max` technical ones; with one fewer,
-# only when the title also names a non-computing function or field (the
-# careers lists `non_tech_function_terms` / `other_field_terms`) - the title
-# breaks a tie, it never decides alone. Anything else is mixed: REVIEW.
+# kinds and no more than `incidental_tech_max` technical ones. With one fewer
+# and a title naming a non-computing function or field, it is REVIEW with that
+# said - the title never decides, not even a tie. Anything else is mixed: REVIEW.
 technical_min: 2
 technical_margin: 2
 business_min: 3
@@ -217,7 +258,9 @@ degree:
                 "degree in engineering", "engineering discipline", "an engineering", "technical degree",
                 "technical subject", "technical discipline", "numerate degree", "numerate subject",
                 "numerate discipline", "science degree", "scientific degree", "quantitative degree",
-                "quantitative subject", "quantitative discipline", "analytical degree", "analytical subject"]
+                "quantitative subject", "quantitative discipline", "analytical degree", "analytical subject",
+                "studying engineering", "engineering students", "engineering student",
+                "engineering undergraduates", "engineering undergraduate"]
   # Subjects that on their own exclude Computer Science when required.
   other_subjects: ["mechanical", "aerospace", "aeronautical", "civil", "structural", "chemical", "materials",
                    "manufacturing", "physics", "chemistry", "biology", "biomedical", "biochemistry",

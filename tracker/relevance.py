@@ -169,6 +169,57 @@ def _kind_of(heading: str) -> str:
     return next((kind for known, kind in rules().heading_kind.items() if fold(known) == wanted), "background")
 
 
+def _headings(text: str) -> list[tuple[int, int, str]]:
+    """(start, end, heading words) of each section heading, as `sections` finds them."""
+    out = []
+    for m in rules().heading.finditer(text):
+        start = m.start(1)
+        before = text[:start].rstrip()
+        if text[start].isupper() and (not before or before[-1] in ".!?;:|)]•·*-"
+                                      or m.group(2).strip() in (":", "?")):
+            out.append((start, m.end(), m.group(1)))
+    return out
+
+
+_SENTENCE_END = re.compile(r"(?<=[.!?;•|])\s+")
+#: "(e.g. procurement, commercial ...)" is one clause, not two.
+_ABBREVIATION = re.compile(r"(?i)\b(?:e\.g|i\.e|etc|incl|approx|vs|no)\.$")
+#: A bullet the feed flattened into the paragraph: "...sample production
+#: Conceptualising, developing...". A capitalised -ing word after a lowercase
+#: word, unless that word governs it ("studying Engineering", "in Computing").
+_BULLET = re.compile(r"(?<=[a-z0-9%)\]])\s+(?=[A-Z][a-z]{2,}ing\b)")
+_GOVERNS = {"in", "of", "and", "or", "the", "a", "an", "for", "to", "with", "studying", "study", "studies",
+            "degree", "within", "into", "including", "e.g", "such", "as", "your", "our", "on", "at", "by"}
+_ING_NOUNS = {"engineering", "computing", "accounting", "marketing", "banking", "manufacturing", "surveying",
+              "nursing", "building", "planning", "trading", "consulting", "publishing", "mining", "printing",
+              "training", "programming", "modelling", "modeling", "processing", "learning", "housing",
+              "funding", "lending", "pricing", "sourcing", "testing", "monitoring", "reporting", "networking"}
+
+
+def clauses(text: str) -> list[tuple[int, int]]:
+    """(start, end) of each clause of a flattened posting: sentences, plus the
+    boundaries flattening erased - section headings and run-together bullets.
+    Without them, Envisics' "Developing mechanical parts" ran into "Minimum
+    Requirements Studying engineering" and read as a mechanical degree
+    requirement (INT-001403)."""
+    cuts = {0, len(text)}
+    cuts |= {m.end() for m in _SENTENCE_END.finditer(text)
+             if not _ABBREVIATION.search(text, max(0, m.start() - 8), m.start())}
+    for start, end, _ in _headings(text):
+        cuts |= {start, end}
+    for m in _BULLET.finditer(text):
+        word = re.match(r"[A-Za-z]*", text[m.end():]).group(0).casefold()
+        prev = text[:m.start()].rsplit(" ", 1)[-1].casefold().strip(",")
+        if word not in _ING_NOUNS and prev not in _GOVERNS:
+            cuts.add(m.end())
+    edges = sorted(cuts)
+    return [(a, b) for a, b in zip(edges, edges[1:]) if text[a:b].strip()]
+
+
+def _clause_at(spans: list[tuple[int, int]], pos: int) -> tuple[int, int]:
+    return next(((a, b) for a, b in spans if a <= pos < b), (0, 0))
+
+
 # ---------------------------------------------------------------------------
 # The three verdicts
 # ---------------------------------------------------------------------------
@@ -189,25 +240,89 @@ def role_relevance(text: str, title: str = "") -> tuple[str, str, list[str]]:
     duties = r.incidental.sub(" ", secs.duties) if r.incidental else secs.duties
     tech = [(m, p) for p in r.technical if (m := p.search(duties))]
     rest = r.technical_all.sub(" ", duties) if r.technical_all else duties
-    biz = [(m, p) for p in r.business if (m := p.search(rest))]
+    spans = clauses(rest)
+    biz, set_aside = [], {}
+    for p in r.business:
+        for m in p.finditer(rest):
+            why = _not_a_duty(rest, spans, m)
+            if not why:
+                biz.append((m, p))
+                break
+            set_aside.setdefault(m.group(0).casefold(), why)
+    counted = {m.group(0).casefold() for m, _ in biz}
+    set_aside = {w: why for w, why in set_aside.items() if w not in counted}
     t, b = len(tech), len(biz)
     tq = list(dict.fromkeys(_quote(duties, m.start(), m.end()) for m, _ in tech))[:2]
     bq = list(dict.fromkeys(_quote(rest, m.start(), m.end()) for m, _ in biz))[:2]
     words = lambda hits: ", ".join(dict.fromkeys(m.group(0).casefold() for m, _ in hits))  # noqa: E731
+    aside = "; not counted: " + ", ".join(f"{w} ({why})" for w, why in list(set_aside.items())[:4]) \
+        if set_aside else ""
     if t >= int(r.raw.get("technical_min", 2)) and t >= b + int(r.raw.get("technical_margin", 2)):
         return TECHNICAL, f"duties are computing work ({words(tech)})", tq
     enough = int(r.raw.get("business_min", 3))
     tie = b == enough - 1 and r.title_other and r.title_other.search(title)
-    if (b >= enough or tie) and t <= int(r.raw.get("incidental_tech_max", 1)):
+    if tie and t <= int(r.raw.get("incidental_tech_max", 1)):
+        # Two kinds of other work and a title naming another function: the
+        # posting itself does not show it clearly, so it is reviewed, never
+        # excluded (Airbus INT-001757, BDO INT-002038 and 10 more on 3 October).
+        return UNCLEAR, (f"duties name two kinds of non-computing work ({words(biz)}) and the title names "
+                         f"{tie.group(0)}; not clear enough from the posting to exclude{aside}"), bq
+    if b >= enough and t <= int(r.raw.get("incidental_tech_max", 1)):
         named = r.title_technical.search(title) if r.title_technical else None
         if named:
             return UNCLEAR, (f"the title names {named.group(0)} but the duties read as {words(biz)} work; "
-                             "not excluded on that alone"), bq
-        also = f"; the title names {tie.group(0)}" if tie else ""
-        return NOT_TECHNICAL, f"duties are {words(biz)} work, not computing{also}", bq
+                             f"not excluded on that alone{aside}"), bq
+        return NOT_TECHNICAL, f"duties are {words(biz)} work, not computing{aside}", bq
+    if aside and not (t or b):
+        return UNCLEAR, f"the duties name no kind of work this filter recognises{aside}", []
     if t or b:
-        return UNCLEAR, f"mixed duties: computing ({words(tech) or 'none'}) and other ({words(biz) or 'none'})", tq + bq
+        return UNCLEAR, (f"mixed duties: computing ({words(tech) or 'none'}) and other ({words(biz) or 'none'})"
+                         f"{aside}"), tq + bq
     return UNCLEAR, "the duties name no kind of work this filter recognises", []
+
+
+def _not_a_duty(text: str, spans: list[tuple[int, int]], m: re.Match) -> str:
+    """Why a non-computing keyword, read in its own clause, is not a duty of
+    the role - or "" when it is. Each was a false exclusion on 3 October:
+    "commercial modelling tools" and "commercial awareness" (MBDA, Carter
+    Jonas), "your analytical, commercial, communication ... skills" (HP),
+    "personal brand" (Savills), "a wide portfolio of projects" (MBDA),
+    "works with ... teams e.g. Marketing, Procurement" (Mondelez)."""
+    ctx = rules().raw.get("business_context") or {}
+    word = m.group(0).casefold()
+    if word in {str(w).casefold() for w in ctx.get("weak_words") or []}:
+        return "too general to count on its own"
+    a, b = _clause_at(spans, m.start())
+    after, before = text[m.end():b], text[a:m.start()]
+    phrases = _any(ctx.get("not_duty_phrases"))
+    if phrases and any(p.start() <= m.start() and m.end() <= p.end()
+                       for p in phrases.finditer(text, max(0, m.start() - 40), min(len(text), m.end() + 40))):
+        return "boilerplate, not a duty"                            # "the recruitment process", "social events"
+    plain = re.sub(r"(?i)\b(e\.g|i\.e)\.", "eg", before)
+    if re.search(r"(?i)\b(?:degree|degrees|studying|discipline|disciplines|bachelor'?s?|bsc|beng|msc)\b"
+                 r"(?:\s+requirements?\s*:)?[^.;:?]{0,160}$", plain):
+        return "a degree subject, not a duty"                       # "a degree in ... (e.g., Chemistry, Biology)"
+
+    def list_then(pattern, limit: int, need_comma: bool = False):
+        """The keyword is one item of a short list that ends in `pattern`."""
+        hit = pattern.search(after[:limit]) if pattern else None
+        if not hit:
+            return None
+        between = after[:hit.start()]
+        ok = re.fullmatch(r"[\w\s,&/'-]*", between) and len(between.split()) <= 6
+        return hit if ok and (not need_comma or "," in between or "," in before[-40:]) else None
+
+    if s := list_then(_any(ctx.get("skill_words")), 60):
+        return f"a {s.group(0).casefold()} word, not a duty"       # "commercial awareness", "... presentation skills"
+    if (tool := _any(ctx.get("tool_words"))) and (s := tool.match(after.lstrip(" -"))):
+        return f"describes the {s.group(0).casefold()}"             # "commercial modelling tools"
+    cues = list(_any(ctx.get("collaborator_cues")).finditer(before)) if ctx.get("collaborator_cues") else []
+    if cues and not re.search(r"\bto\s+[a-z]+", before[cues[-1].end():]) and len(before) - cues[-1].end() <= 160:
+        return "names who the role works with, not what it does"   # "works with ... e.g. Marketing"
+    enumerated = re.search(r"(?i)(?:\(|\be\.g\.?,?|\bsuch as|\bincluding)\s*[\w\s,&/'-]{0,60}$", before)
+    if enumerated and list_then(_any(ctx.get("team_nouns")), 100, need_comma=True):
+        return "one of a list of colleagues or teams"               # "(e.g. procurement, commercial, ... engineers"
+    return ""
 
 
 _YEARS = re.compile(r"(?i)(?<!over )(?<!more than )\b(\d{1,2})\s*\+?\s*(?:or more )?years?'? (?:of )?"
@@ -230,10 +345,9 @@ def study_level(title: str, text: str, today: date | None = None) -> tuple[str, 
     ug = r.ug
     secs = sections(text)
     where = secs.requirements if secs.has_requirements else text
-    if ug["not_student_titles"] and (t := ug["not_student_titles"].search(title)) and not (
-            ug["student_titles"] and ug["student_titles"].search(title)):
-        kind = GRADUATE_ONLY if "grad" in t.group(0).casefold() else EXPERIENCED
-        return kind, f"the title is a {'graduate' if kind == GRADUATE_ONLY else 'senior'} role", [title]
+    title_says = ug["not_student_titles"].search(title) if ug["not_student_titles"] else None
+    if title_says and ug["student_titles"] and ug["student_titles"].search(title):
+        title_says = None
     many = [m for m in _YEARS.finditer(where) if 2 <= int(m.group(1)) <= 15]
     if many:
         m = many[0]
@@ -259,6 +373,10 @@ def study_level(title: str, text: str, today: date | None = None) -> tuple[str, 
         for m in ug["already_graduated"].finditer(text):
             if not _CONDITIONAL.search(text[max(0, m.start() - 30):m.start()]):
                 return GRADUATE_ONLY, "requires a completed degree", [_quote(text, m.start(), m.end())]
+    if title_says:
+        # Only the title says graduate or senior; the posting does not. Not an
+        # exclusion - CS is only ruled out on the employer's own words.
+        return LEVEL_UNCLEAR, f"only the title suggests a non-student role ({title_says.group(0)})", [title]
     if ug["integrated_masters"] and (m := ug["integrated_masters"].search(text)):
         return LEVEL_UNCLEAR, f"names an integrated master's ({m.group(0)}) without saying who may apply", \
             [_quote(text, m.start(), m.end())]
@@ -279,6 +397,21 @@ def _strength(sentence: str) -> str:
     return "unclear"
 
 
+def _studied(sentence: str, start: int, end: int) -> bool:
+    """Is the subject at sentence[start:end] the object of a study cue - a few
+    words after one ("degree in ... Physics"), or just before one ("Physics
+    degree")?"""
+    cues = rules().deg["cues"]
+    if not cues:
+        return False
+    before, after = sentence[max(0, start - 90):start], sentence[end:end + 30]
+    lead = list(cues.finditer(before))
+    if lead and len(before[lead[-1].end():].split()) <= 10 and not re.search(r"[;:]|\.\s", before[lead[-1].end():]):
+        return True
+    follow = cues.search(after)
+    return bool(follow and len(after[:follow.start()].split()) <= 2)
+
+
 def degree_subject(text: str) -> tuple[str, str, list[str]]:
     """(value, reason, quotes): which degree subjects the employer takes, in
     its exact words. Computer Science only counts when named (or "any
@@ -296,10 +429,20 @@ def degree_subject(text: str) -> tuple[str, str, list[str]]:
         if best is None or item[0] < best[0]:
             best = item
 
-    for sentence in _SENTENCES.split(text):
+    heads = _headings(text)
+    for a, b in clauses(text):
+        sentence = text[a:b].strip()
         if not (d["cues"] and d["cues"].search(sentence)):
             continue
-        strength = _strength(sentence)
+        own = _strength(sentence)
+        under = next((h for s, e, h in reversed(heads) if e <= a), "")
+        # A heading that says so ("Requirements") is recorded as the strength,
+        # but an EXCLUSION needs the clause's own words ("must", "only open
+        # to"): "Successful candidates will be: Currently pursuing ...
+        # Mechanical or Aerospace Engineering" under "Requirements" (Airbus
+        # INT-001168/-001889/-001903/-001960) names who is wanted without
+        # excluding Computer Science in so many words - REVIEW, never hidden.
+        strength = _strength(under) if own == "unclear" and under and _kind_of(under) == "requirements" else own
         if d["any"] and (m := d["any"].search(sentence)):
             offer(ANY_DISCIPLINE, "open to any degree subject", sentence, m)
             continue
@@ -316,16 +459,26 @@ def degree_subject(text: str) -> tuple[str, str, list[str]]:
                                        "equivalence not assumed", sentence, m)
             continue
         broad = d["broad_field"].search(sentence) if d["broad_field"] else None
-        other = d["other_subjects"].search(broad and d["broad_field"].sub(" ", sentence) or sentence)             if d["other_subjects"] else None
+        if broad:
+            # "a 'STEM' subject (science, technology, engineering or mathematics)":
+            # subjects named beside a broad field spell it out - they never
+            # exclude Computer Science (INT-000372).
+            offer(BROAD_FIELD, f"asks only for a broad field ({broad.group(0)}, {strength})", sentence, broad)
+            continue
+        # The subject must be what the study phrase names ("studying Mechanical
+        # Engineering", "a Physics degree"), not a word the clause shares with it.
+        other = next((m for m in d["other_subjects"].finditer(sentence) if _studied(sentence, m.start(), m.end())),
+                     None) \
+            if d["other_subjects"] else None
         if other:
-            if strength == "required" and not (d["open_ended"] and d["open_ended"].search(sentence)):
+            if own == "required" and not (d["open_ended"] and d["open_ended"].search(sentence)):
                 offer(OTHER_SUBJECT_ONLY, f"requires a degree in another subject ({other.group(0)})", sentence, other)
             else:
-                offer(EQUIVALENCE_UNCLEAR, f"names {other.group(0)} ({strength}); Computer Science not named",
+                how = (f"listed under a '{under}' heading, but the clause does not say only or must"
+                       if own != "required" and strength == "required" else strength)
+                offer(EQUIVALENCE_UNCLEAR, f"names {other.group(0)} ({how}); Computer Science not named, "
+                                           "nor excluded in so many words",
                       sentence, other)
-            continue
-        if broad:
-            offer(BROAD_FIELD, f"asks only for a broad field ({broad.group(0)}, {strength})", sentence, broad)
     if best is None:
         return NOT_STATED, "no degree subject stated", []
     return best[1], best[2], best[3]

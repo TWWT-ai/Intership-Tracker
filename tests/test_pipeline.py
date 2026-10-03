@@ -263,7 +263,9 @@ class TestSeasonsAndStatus:
         assert new["Deadline"] is None                  # not the 2026 round's date
         assert "GIC Internship Programme 2026" not in rows     # deadline passed, never applied: off the sheet
         old = _saved_by_title()["GIC Internship Programme 2026"]
-        assert (old["id"], old["status"], old["open_status"]) == ("INT-000214", "FOUND", "CLOSED")
+        # The legacy CLOSED had no employer wording behind it (a passed
+        # deadline), so it is not carried as closure: expiry is not closure.
+        assert (old["id"], old["status"], old["open_status"]) == ("INT-000214", "FOUND", "UNKNOWN")
 
     def test_a_listed_deadline_is_never_carried_onto_a_listing_without_one(self, fake_run):
         """A pre-fix row could hold a deadline merged in from another round."""
@@ -310,3 +312,100 @@ def _set_status(title: str, status: str) -> None:
     row = next(r for r in range(2, ws.max_row + 1) if ws.cell(r, col["Job Title"]).value == title)
     ws.cell(row, col[excel.STATUS_COLUMN]).value = status
     wb.save(config.WORKBOOK)
+
+
+# ---------------------------------------------------------------- the nightly rebuild (2026-10-03)
+# Expiry and hiring stay separate through the normal nightly path - verify,
+# carry state, rebuild the sheet - not only in the assessment dry run.
+
+class NightSession:
+    """One night's verification: canned pages, every other request refused."""
+    pages: dict = {}
+
+    def __init__(self):
+        self.http = self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def close(self):
+        pass
+
+    @property
+    def browser(self):
+        raise SourceError("no browser in tests")
+
+    def get(self, url, **_):
+        from sources.fetch import Response
+
+        if url in NightSession.pages:
+            return Response(url=url, status=200, text=NightSession.pages[url])
+        raise SourceError(f"refused {url}")
+
+
+CLOSED_URL = "https://jobs.closedco.com/careers/job/12345"
+CLOSED_PAGE = ("<html lang='en-GB'><body><main><h1>Software Engineering Intern</h1><p>"
+               + "You will build software with our engineering team. " * 12
+               + "Applications are closed.</p></main></body></html>")
+
+
+def _sheet() -> dict[str, dict]:
+    ws = load_workbook(config.WORKBOOK)[excel.SHEET_JOBS]
+    header = [c.value for c in ws[1]]
+    rows = {}
+    for r in range(2, ws.max_row + 1):
+        cells = {h: ws.cell(r, i + 1).value for i, h in enumerate(header)}
+        rows[cells["Job Title"]] = {**cells, "row": r}
+    return rows
+
+
+class TestNightlyRebuild:
+    def _night(self, monkeypatch, fake_run, specs, pages):
+        NightSession.pages = pages
+        fake_run({"trackr": FakeAdapter(specs)})
+        monkeypatch.setattr(pipeline, "Session", NightSession)
+        return pipeline.run_daily()                      # verification on: the normal nightly path
+
+    def test_closed_and_expired_roles_survive_two_nights_with_the_assessment_on(self, monkeypatch, fake_run):
+        from tracker import role_filter
+
+        monkeypatch.setattr(role_filter, "enabled", lambda: True)
+        closed = {"company": "Closed Co", "title": "Platform Engineering Intern", "source": "trackr",
+                  "deadline": date.today() + timedelta(days=40), "application_url": CLOSED_URL}
+        expired = {"company": "Arm", "title": "Embedded Software Intern", "source": "trackr",
+                   "deadline": date.today() - timedelta(days=5)}
+        specs = [closed, expired, NVIDIA]
+        self._night(monkeypatch, fake_run, specs, {CLOSED_URL: CLOSED_PAGE})   # night 1: the employer says closed
+        self._night(monkeypatch, fake_run, specs, {})                          # night 2: every page refused
+
+        rows = _sheet()
+        shut, gone, live = rows[closed["title"]], rows[expired["title"]], rows[NVIDIA["title"]]
+        assert (shut["Open Status"], shut["Hiring Status"]) == ("CLOSED", "EMPLOYER_CLOSED")   # kept, marked CLOSED
+        assert gone["Open Status"] != "CLOSED" and str(gone["Deadline Status"]).startswith("EXPIRED")
+        assert live["row"] < min(shut["row"], gone["row"])                    # both sorted to the bottom
+        saved = _saved_by_title()
+        assert 'employer page says "applications are closed"' in saved[closed["title"]]["closed_evidence"]
+        assert saved[expired["title"]]["open_status"] != "CLOSED"
+
+    def test_the_normal_path_never_closes_a_role_because_its_deadline_passed(self, monkeypatch, fake_run):
+        # The flag is off: this is the path that runs every night today.
+        expired = {**NVIDIA, "deadline": date.today() - timedelta(days=5)}
+        self._night(monkeypatch, fake_run, [expired], {})
+        assert _saved_by_title()[expired["title"]]["open_status"] != "CLOSED"
+
+        # As the old checker left it: CLOSED with its reason lost, kept on the
+        # sheet by the user's status (INT-000066, -000300, -000416, -000423).
+        saved = json.loads((config.STATE_DIR / "last_run.json").read_text(encoding="utf-8"))
+        jobs = [pipeline.Job.from_dict(j) for j in saved["jobs"]]
+        for job in jobs:
+            job.open_status, job.verification_note = OpenStatus.CLOSED, ""
+            job.status = ApplicationStatus.APPLIED
+        pipeline._save_previous(jobs)
+        excel.write(jobs)
+
+        self._night(monkeypatch, fake_run, [expired], {})
+        row = _rows_by_title()[expired["title"]]
+        assert (row["Status"], row["Open Status"]) == ("Application Submitted", "UNKNOWN")
