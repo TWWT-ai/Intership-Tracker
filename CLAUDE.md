@@ -121,6 +121,18 @@ data/checkpoint/
   user-owned cells back in by ID first.
 - The layout pass (`technical_programmes.py --after-daily`) then reshapes the
   written sheet. A change to the columns has to work in both places.
+- **A full scan takes about 3.5 hours** (10 Oct 2026: 10:29-14:02), most of it
+  the careers boards read at each site's crawl delay. Snapshots are saved as
+  each source finishes; `last_run.json` and the workbook only at the very end,
+  so an interrupted run changes nothing but snapshots.
+- **The scheduled scan is the Windows task "Internship Tracker Daily"**
+  (`scripts/register_task.ps1`, runs `scripts/daily_then_format.py`): daily at
+  01:00, a missed run starts at the next logon (StartWhenAvailable), runs only
+  while the user is logged on, 8-hour limit. If the PC sleeps or shuts down
+  mid-scan the run is lost (6-9 Oct 2026 were all cut off in the careers
+  stage). To run a scan from a Claude session, start that task
+  (`Start-ScheduledTask -TaskName "Internship Tracker Daily"`): a background
+  shell command is capped at 2 hours and is killed before the scan ends.
 
 Paths all come from `tracker/config.py` (`WORKBOOK`, `STATE_DIR`, ...).
 `tests/conftest.py` monkeypatches them.
@@ -151,14 +163,22 @@ pipenv run python main.py daily --dry-run                        # full run, no 
 pipenv run python main.py search --source trackr                 # one source, print only
 pipenv run python main.py statuses --dry-run                     # email sync preview
 pipenv run python main.py prep INT-000123                        # review packet for one job
-pipenv run python data/checkpoint/technical_programmes.py --check  # verify layout, no write
+pipenv run python main.py assess --dry-run                       # assessment report, no write
+pipenv run python main.py assess --dry-run --fetch 100 --audit <role-link-audit.csv>
+pipenv run python main.py assess --apply                         # needs apply_to_workbook: true
+pipenv run python data/checkpoint/technical_programmes.py --after-daily --check  # verify the nightly layout, no write
 pipenv run python main.py events --plan                          # hackathon sweep plan
 pipenv run python main.py events --ingest data/state/event_candidates.json  # merge a sweep
 ```
 
 There is no linter or build step. If the scheduler or a script bypasses
 pipenv, it calls `.venv\Scripts\python.exe` directly. Every command is
-listed in `README.md` under "Commands".
+listed in `README.md` under "Commands" (except `assess`, not added there yet).
+`technical_programmes.py --check` alone re-checks the one-off consolidation
+from `data/checkpoint/backups/internships-before-company-consolidation.xlsx`;
+the nightly path is `--after-daily`, so check it with `--after-daily --check`.
+Start a full scan from PowerShell with
+`Start-ScheduledTask -TaskName "Internship Tracker Daily"` (see "How a run flows").
 
 A write fails while Excel has the workbook open (`data/~$internships.xlsx`
 exists). The status sync treats that as "skipped - workbook busy" and writes
@@ -177,7 +197,10 @@ These four exist because they encode promises to the user. Do not weaken them:
 - `test_never_invents_strengths_or_gaps`
 
 `tests/conftest.py` redirects every data path to a temp dir, so tests never
-touch the real workbook.
+touch the real workbook. It also pins the assessment off (`assessment_off`)
+and shows every column (`full_layout`), so the suite never depends on the
+user's own `apply_to_workbook` or column layout; tests of the assessment
+switch it on themselves (`on` in `tests/test_role_filter.py`).
 
 ## Things that will bite you
 
@@ -202,6 +225,18 @@ touch the real workbook.
   and AI training, not ordinary agents. Eightfold has a
   reader but is off in `platforms`: `urllib.robotparser` applies the first
   matching rule, so its `Disallow: /` beats the later `Allow: /api/pcsx`.
+- **Source state as of 10 Oct 2026.** Gradcracker, Bright Network and
+  TargetJobs serve an anti-bot check on every run, so their rows come from
+  ageing snapshots (Gradcracker and Bright Network 20 Sep, TargetJobs 30 Sep):
+  their deadlines and openings stop updating. Fixing that needs the user to
+  clear the check once in a visible browser (`browser.headless: false`, then
+  `main.py search --source gradcracker`) - never a bypass. Oleeo boards for
+  Jefferies, Morgan Stanley, Nomura, L.E.K. and three police forces also
+  challenge; Checkout.com's Workday returns 403 to non-browser clients.
+  Deductive AI (Ashby), Perplexity and Wayve (Greenhouse) and "Cogna"
+  (Workable account `j`, which looks wrong) return 404: the board moved or
+  the slug is stale - check the company's careers page before changing
+  `careers.boards`.
 - **"New South Wales" is not Wales.** `careers.uk_false_friends` strips places
   abroad named after a UK country before the UK check; without it Sydney roles
   pass as UK.
@@ -269,8 +304,10 @@ touch the real workbook.
   range with merged cells of different sizes, and a text date ("Not stated")
   drops out of the date filter. Unknown dates are blank. Both layout scripts
   verify this. Row order is `excel.sort_jobs`: new this scan (`change_type`
-  NEW), then nearest deadline, dead roles last. A role past its deadline is
-  not written at all unless it has a user status or note (`excel.write`); it
+  NEW), then nearest deadline, dead roles last. With the assessment on (since
+  3 Oct 2026) a role past its deadline, or closed in the employer's words,
+  stays on the sheet at the bottom; with it off, a role past its deadline is
+  not written at all unless it has a user status or note (`excel.write`) - it
   stays in last_run.json, and an email advancing it brings it back.
 - **openpyxl writes formulas without cached values.** Avoid formulas in the
   workbook; compute in Python and write values.

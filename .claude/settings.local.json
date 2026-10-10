@@ -5,7 +5,10 @@
       "PowerShell($env:PYTHONIOENCODING='ascii:replace'; & .venv\\\\Scripts\\\\python.exe scripts\\\\statuses_then_format.py; \"EXIT=$LASTEXITCODE\")",
       "mcp__0e056a82-65e3-4d17-85ec-a84c7265919c__search_threads",
       "PowerShell($env:PYTHONIOENCODING='ascii:replace'; .venv\\\\Scripts\\\\python.exe scripts\\\\statuses_then_format.py; \"EXIT=$LASTEXITCODE\")",
-      "PowerShell($env:PYTHONIOENCODING='ascii:replace'; .venv\\\\Scripts\\\\python.exe scripts\\\\calendar_sync.py plan; \"EXIT=$LASTEXITCODE\"; Get-Content data\\\\state\\\\calendar_plan.json -Raw)"
+      "PowerShell($env:PYTHONIOENCODING='ascii:replace'; .venv\\\\Scripts\\\\python.exe scripts\\\\calendar_sync.py plan; \"EXIT=$LASTEXITCODE\"; Get-Content data\\\\state\\\\calendar_plan.json -Raw)",
+      "PowerShell($env:PYTHONIOENCODING='ascii:replace'; & .venv\\\\Scripts\\\\python.exe scripts\\\\calendar_sync.py plan; \"EXIT=$LASTEXITCODE\"; Get-Content data\\\\state\\\\calendar_plan.json -Raw)",
+      "mcp__31c015ab-5e0f-4ae7-9ba3-1af2226d1645__update_event",
+      "PowerShell($env:PYTHONIOENCODING='ascii:replace'; & .venv\\\\Scripts\\\\python.exe scripts\\\\calendar_sync.py record data\\\\state\\\\calendar_results.json; \"EXIT=$LASTEXITCODE\")"
     ]
   }
 }
